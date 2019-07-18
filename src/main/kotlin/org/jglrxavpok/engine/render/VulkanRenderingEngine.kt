@@ -21,6 +21,7 @@ import org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EX
 import org.lwjgl.vulkan.KHRSurface.*
 import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
+import kotlin.math.log
 
 /**
  * Vulkan implementation of the render engine
@@ -33,6 +34,7 @@ object VulkanRenderingEngine: IRenderEngine {
     val RenderHeight: Int = 1080
     private var enableValidationLayers: Boolean = true
     private var windowPointer: Long = -1L
+    private val maxFramesInFlight = 3
 
     private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation")
     private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
@@ -55,13 +57,16 @@ object VulkanRenderingEngine: IRenderEngine {
     private var pipelineLayout: VkPipelineLayout = -1
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
-    private var imageAvailableSemaphore: VkSemaphore = -1
-    private var renderFinishedSemaphore: VkSemaphore = -1
+    private lateinit var imageAvailableSemaphores: List<VkSemaphore>
+    private lateinit var renderFinishedSemaphores: List<VkSemaphore>
+    private lateinit var inFlightFences: List<VkFence>
     private lateinit var swapchainExtent: VkExtent2D
     private lateinit var swapchainImages: List<VkImage>
     private lateinit var swapchainImageViews: List<VkImageView>
     private lateinit var swapchainFramebuffers: List<VkFramebuffer>
     private lateinit var commandBuffers: List<VkCommandBuffer>
+
+    private var currentFrame = 0
 
     // End of Vulkan objects
 
@@ -95,7 +100,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createFramebuffers()
         createCommandPool()
         createCommandBuffers()
-        createSemaphores()
+        createSyncingMechanisms()
     }
 
     private fun initVulkanInstance(gameInfo: GameInformation, enableValidationLayers: Boolean) {
@@ -558,16 +563,31 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createSemaphores() {
+    private fun createSyncingMechanisms() {
         useStack {
             val semaphoreInfo = VkSemaphoreCreateInfo.callocStack(this)
             semaphoreInfo.sType(VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO)
+            val fenceInfo = VkFenceCreateInfo.callocStack(this)
+            fenceInfo.sType(VK_STRUCTURE_TYPE_FENCE_CREATE_INFO)
+            fenceInfo.flags(VK_FENCE_CREATE_SIGNALED_BIT)
 
-            val pSemaphores = mallocLong(1)
-            vkCreateSemaphore(logicalDevice, semaphoreInfo, null, pSemaphores).checkVKErrors()
-            imageAvailableSemaphore = !pSemaphores
-            vkCreateSemaphore(logicalDevice, semaphoreInfo, null, pSemaphores).checkVKErrors()
-            renderFinishedSemaphore = !pSemaphores
+            val availabilitySemaphores = mutableListOf<VkSemaphore>()
+            val workDoneSemaphores = mutableListOf<VkSemaphore>()
+            val fences = mutableListOf<VkFence>()
+            for(i in 0 until maxFramesInFlight) {
+                val pSync = mallocLong(1)
+                vkCreateSemaphore(logicalDevice, semaphoreInfo, null, pSync).checkVKErrors()
+                availabilitySemaphores += !pSync
+                vkCreateSemaphore(logicalDevice, semaphoreInfo, null, pSync).checkVKErrors()
+                workDoneSemaphores += !pSync
+
+                vkCreateFence(logicalDevice, fenceInfo, null, pSync).checkVKErrors()
+                fences += !pSync
+            }
+
+            imageAvailableSemaphores = availabilitySemaphores
+            renderFinishedSemaphores = workDoneSemaphores
+            inFlightFences = fences
         }
     }
 
@@ -760,25 +780,32 @@ object VulkanRenderingEngine: IRenderEngine {
             // TODO
             //glfwSwapBuffers(windowPointer)
         }
+
+        vkDeviceWaitIdle(logicalDevice)
     }
 
     private fun drawFrame() {
         useStack {
+            val fences = longs(inFlightFences[currentFrame])
+            vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
+            vkResetFences(logicalDevice, fences)
             val pImageIndex = mallocInt(1)
-            vkAcquireNextImageKHR(logicalDevice, swapchain, Long.MAX_VALUE, imageAvailableSemaphore, VK_NULL_HANDLE, pImageIndex)
+            vkAcquireNextImageKHR(logicalDevice, swapchain, Long.MAX_VALUE, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, pImageIndex)
 
-            graphicsQueueSubmit(!pImageIndex)
+            graphicsQueueSubmit(!pImageIndex, currentFrame)
 
-            present(!pImageIndex)
+            present(!pImageIndex, currentFrame)
         }
+
+        currentFrame = (currentFrame + 1) % maxFramesInFlight
     }
 
-    private fun MemoryStack.graphicsQueueSubmit(imageIndex: Int) {
+    private fun MemoryStack.graphicsQueueSubmit(imageIndex: Int, currentFrame: Int) {
         val submitInfo = VkSubmitInfo.callocStack(this)
         submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO)
 
         val waitSemaphores = mallocLong(1)
-        waitSemaphores.put(imageAvailableSemaphore).flip()
+        waitSemaphores.put(imageAvailableSemaphores[currentFrame]).flip()
 
         val waitStages = mallocInt(1)
         waitStages.put(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT).flip()
@@ -788,20 +815,20 @@ object VulkanRenderingEngine: IRenderEngine {
         submitInfo.pWaitDstStageMask(waitStages)
 
         val signalSemaphores = mallocLong(1)
-        signalSemaphores.put(renderFinishedSemaphore).flip()
+        signalSemaphores.put(renderFinishedSemaphores[currentFrame]).flip()
         submitInfo.pSignalSemaphores(signalSemaphores)
 
         val buffers = mallocPointer(1)
-        buffers.put(commandBuffers[imageIndex].address()).flip()
+        buffers.put(commandBuffers[currentFrame].address()).flip()
         submitInfo.pCommandBuffers(buffers)
 
-        vkQueueSubmit(graphicsQueue, submitInfo, VK_NULL_HANDLE).checkVKErrors()
+        vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences[currentFrame]).checkVKErrors()
     }
 
-    private fun MemoryStack.present(imageIndex: Int) {
+    private fun MemoryStack.present(imageIndex: Int, currentFrame: Int) {
         val presentInfo = VkPresentInfoKHR.callocStack(this)
         presentInfo.sType(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR)
-        val waitSemaphores = longs(renderFinishedSemaphore)
+        val waitSemaphores = longs(renderFinishedSemaphores[currentFrame])
         presentInfo.pWaitSemaphores(waitSemaphores)
 
         presentInfo.swapchainCount(1)
@@ -821,8 +848,11 @@ object VulkanRenderingEngine: IRenderEngine {
      * Cleanup native objects
      */
     fun cleanup() {
-        vkDestroySemaphore(logicalDevice, imageAvailableSemaphore, null)
-        vkDestroySemaphore(logicalDevice, renderFinishedSemaphore, null)
+        for(i in 0 until maxFramesInFlight) {
+            vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], null)
+            vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], null)
+            vkDestroyFence(logicalDevice, inFlightFences[i], null)
+        }
         swapchainFramebuffers.forEach {
             vkDestroyFramebuffer(logicalDevice, it, null)
         }
