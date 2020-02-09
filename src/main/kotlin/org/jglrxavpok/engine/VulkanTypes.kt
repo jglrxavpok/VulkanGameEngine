@@ -11,7 +11,12 @@ typealias VkRenderPass = Long
 typealias VkPipeline = Long
 typealias VkFramebuffer = Long
 typealias VkCommandPool = Long
+typealias VkBuffer = Long
 typealias VkSemaphore = Long
 typealias VkFence = Long
+typealias VkDeviceMemory = Long
+typealias VkDeviceSize = Long
 
+typealias VkBufferUsageFlags = Int
+typealias VkMemoryPropertyFlags = Int
 typealias VkPresentModeKHR = Int

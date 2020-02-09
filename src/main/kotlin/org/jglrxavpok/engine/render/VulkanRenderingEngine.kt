@@ -3,6 +3,8 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
+import org.joml.Vector2f
+import org.joml.Vector3f
 import org.lwjgl.PointerBuffer
 import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWVulkan
@@ -21,7 +23,8 @@ import org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EX
 import org.lwjgl.vulkan.KHRSurface.*
 import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
-import kotlin.math.log
+import org.jglrxavpok.engine.render.Vertex.Companion.put
+import java.nio.LongBuffer
 
 /**
  * Vulkan implementation of the render engine
@@ -34,11 +37,19 @@ object VulkanRenderingEngine: IRenderEngine {
     val RenderHeight: Int = 1080
     private var enableValidationLayers: Boolean = true
     private var windowPointer: Long = -1L
+    private var framebufferResized = false
     private val maxFramesInFlight = 3
 
     private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation")
     private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
     private val memoryStack = MemoryStack.create()
+
+    val vertices = listOf(
+        Vertex(Vector2f(0.0f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f)),
+        Vertex(Vector2f(0.5f, 0.5f), Vector3f(1.0f, 1.0f, 1.0f)),
+        Vertex(Vector2f(-0.5f, 0.5f), Vector3f(0.0f, 0.0f, 1.0f))
+    );
+
     // Start of Vulkan objects
 
     private lateinit var vulkan: VkInstance
@@ -57,6 +68,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private var pipelineLayout: VkPipelineLayout = -1
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
+    private var vertexBuffer: VkBuffer = -1
     private lateinit var imageAvailableSemaphores: List<VkSemaphore>
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
     private lateinit var inFlightFences: List<VkFence>
@@ -83,6 +95,9 @@ object VulkanRenderingEngine: IRenderEngine {
         val mode = glfwGetVideoMode(glfwGetPrimaryMonitor())!!
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
         windowPointer = glfwCreateWindow(mode.width(), mode.height(), gameInfo.name, glfwGetPrimaryMonitor(), NULL)
+        glfwSetWindowSizeCallback(windowPointer) { window, width, height ->
+            framebufferResized = true
+        }
 
         // init Vulkan
         this.enableValidationLayers = enableValidationLayers
@@ -99,6 +114,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createGraphicsPipeline()
         createFramebuffers()
         createCommandPool()
+        createVertexBuffer()
         createCommandBuffers()
         createSyncingMechanisms()
     }
@@ -381,7 +397,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val vertexInputInfo = VkPipelineVertexInputStateCreateInfo.callocStack(this)
             vertexInputInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO)
-            // TODO: Filled later
+            val bindingDescription = Vertex.getBindingDescription(this)
+            val attributeDescriptions = Vertex.getAttributeDescriptions(this)
+            vertexInputInfo.pVertexAttributeDescriptions(attributeDescriptions)
+            vertexInputInfo.pVertexBindingDescriptions(bindingDescription)
 
             val inputAssembly = VkPipelineInputAssemblyStateCreateInfo.callocStack(this)
             inputAssembly.sType(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO)
@@ -516,6 +535,113 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
+    private fun createVertexBuffer() {
+        useStack {
+            val bufferSize = (vertices.size * Vertex.SizeOf).toLong()
+            val pBuffer = mallocLong(1)
+            val pMemory = mallocLong(1)
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, pBuffer, pMemory)
+            val stagingBuffer = !pBuffer
+            val stagingBufferMemory = !pMemory
+
+            val ppData = mallocPointer(1)
+            vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, ppData).checkVKErrors()
+            val data = ppData.get(0)
+            val buffer = malloc(bufferSize.toInt())
+            val fb = buffer.asFloatBuffer()
+            for (vertex in vertices) {
+                fb.put(vertex)
+            }
+            memCopy(memAddress(buffer), data, buffer.remaining().toLong())
+            vkUnmapMemory(logicalDevice, stagingBufferMemory)
+
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pBuffer, pMemory)
+            vertexBuffer = !pBuffer
+
+            copyBuffer(stagingBuffer, vertexBuffer, bufferSize)
+
+            vkDestroyBuffer(logicalDevice, stagingBuffer, null)
+            vkFreeMemory(logicalDevice, stagingBufferMemory, null)
+        }
+    }
+
+    private fun copyBuffer(srcBuffer: VkBuffer, dstBuffer: VkBuffer, size: VkDeviceSize) {
+        useStack {
+            // allocate command buffer to perform copy
+            val allocInfo = VkCommandBufferAllocateInfo.callocStack(this)
+            allocInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO)
+            allocInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+            allocInfo.commandPool(commandPool) // TODO: maybe use a separate pool for temp buffers
+            allocInfo.commandBufferCount(1)
+
+            val pBuffer = mallocPointer(1)
+            vkAllocateCommandBuffers(logicalDevice, allocInfo, pBuffer).checkVKErrors()
+            val commandBuffer = VkCommandBuffer(!pBuffer, logicalDevice)
+
+            // record command buffer
+            val beginInfo = VkCommandBufferBeginInfo.callocStack(this)
+            beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO)
+            beginInfo.flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+
+            vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
+
+            val copyRegion = VkBufferCopy.callocStack(1, this)
+            copyRegion.srcOffset(0)
+            copyRegion.dstOffset(0)
+            copyRegion.size(size)
+            vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, copyRegion)
+            vkEndCommandBuffer(commandBuffer).checkVKErrors()
+
+            // execute command buffer
+            submitCommandBuffer(graphicsQueue, commandBuffer)
+            vkQueueWaitIdle(graphicsQueue).checkVKErrors()
+            vkFreeCommandBuffers(logicalDevice, commandPool, commandBuffer)
+        }
+    }
+
+    private fun submitCommandBuffer(queue: VkQueue, vararg commandBuffers: VkCommandBuffer) {
+        useStack {
+            val pBuffer = mallocPointer(commandBuffers.size)
+            commandBuffers.forEach {
+                pBuffer.put(it)
+            }
+            pBuffer.rewind()
+            val submitInfo = VkSubmitInfo.callocStack(this)
+            submitInfo.sType(VK_STRUCTURE_TYPE_SUBMIT_INFO)
+            submitInfo.pCommandBuffers(pBuffer)
+
+            vkQueueSubmit(queue, submitInfo, VK_NULL_HANDLE).checkVKErrors()
+        }
+    }
+
+    private fun createBuffer(size: VkDeviceSize, usage: VkBufferUsageFlags, properties: VkMemoryPropertyFlags, buffer: LongBuffer, bufferMemory: LongBuffer) {
+        useStack {
+            val bufferInfo = VkBufferCreateInfo.callocStack(this)
+            bufferInfo.sType(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO)
+            bufferInfo.size(size)
+            bufferInfo.usage(usage)
+            bufferInfo.sharingMode(VK_SHARING_MODE_EXCLUSIVE)
+
+            if(vkCreateBuffer(logicalDevice, bufferInfo, null, buffer) != VK_SUCCESS) {
+                error("Failed to create buffer")
+            }
+
+            val memRequirements = VkMemoryRequirements.callocStack(this)
+            vkGetBufferMemoryRequirements(logicalDevice, !buffer, memRequirements)
+
+            val allocInfo = VkMemoryAllocateInfo.callocStack(this)
+            allocInfo.sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)
+            allocInfo.allocationSize(memRequirements.size())
+            allocInfo.memoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits(), properties))
+
+            if(vkAllocateMemory(logicalDevice, allocInfo, null, bufferMemory) != VK_SUCCESS) {
+                error("Failed to allocate buffer memory")
+            }
+
+            vkBindBufferMemory(logicalDevice, !buffer, !bufferMemory, 0)
+        }
+    }
+
     private fun createCommandBuffers() {
         val count = swapchainFramebuffers.size
         useStack {
@@ -554,7 +680,16 @@ object VulkanRenderingEngine: IRenderEngine {
                 vkCmdBeginRenderPass(it, renderPassInfo, VK_SUBPASS_CONTENTS_INLINE) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
                 vkCmdBindPipeline(it, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
-                vkCmdDraw(it, 3, 1, 0, 0)
+
+                val pVertexBuffers = mallocLong(1)
+                pVertexBuffers.put(vertexBuffer)
+                pVertexBuffers.flip()
+                val pOffsets = mallocLong(1)
+                pOffsets.put(0L)
+                pOffsets.flip()
+                vkCmdBindVertexBuffers(it, 0, pVertexBuffers, pOffsets)
+
+                vkCmdDraw(it, vertices.size, 1, 0, 0)
 
                 vkCmdEndRenderPass(it)
 
@@ -713,8 +848,15 @@ object VulkanRenderingEngine: IRenderEngine {
             return capabilities.currentExtent()
         }
         val actualExtent = VkExtent2D.callocStack(this)
-        actualExtent.width(RenderWidth.coerceIn(capabilities.minImageExtent().width() .. capabilities.maxImageExtent().width()))
-        actualExtent.height(RenderHeight.coerceIn(capabilities.minImageExtent().height() .. capabilities.maxImageExtent().height()))
+        useStack {
+            val pWidth = mallocInt(1)
+            val pHeight = mallocInt(1)
+            glfwGetFramebufferSize(windowPointer, pWidth, pHeight)
+            val fbWidth = !pWidth
+            val fbHeight = !pHeight
+            actualExtent.width(fbWidth.coerceIn(capabilities.minImageExtent().width() .. capabilities.maxImageExtent().width()))
+            actualExtent.height(fbHeight.coerceIn(capabilities.minImageExtent().height() .. capabilities.maxImageExtent().height()))
+        }
         return actualExtent
     }
 
@@ -778,7 +920,7 @@ object VulkanRenderingEngine: IRenderEngine {
             glfwPollEvents()
             drawFrame()
             // TODO
-            //glfwSwapBuffers(windowPointer)
+            glfwSwapBuffers(windowPointer)
         }
 
         vkDeviceWaitIdle(logicalDevice)
@@ -790,7 +932,11 @@ object VulkanRenderingEngine: IRenderEngine {
             vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
             vkResetFences(logicalDevice, fences)
             val pImageIndex = mallocInt(1)
-            vkAcquireNextImageKHR(logicalDevice, swapchain, Long.MAX_VALUE, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, pImageIndex)
+            val result = vkAcquireNextImageKHR(logicalDevice, swapchain, Long.MAX_VALUE, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, pImageIndex)
+            if(result == VK_ERROR_OUT_OF_DATE_KHR) { // swapchain is no longer adequate, update
+                recreateSwapchain()
+                return@useStack
+            }
 
             graphicsQueueSubmit(!pImageIndex, currentFrame)
 
@@ -822,6 +968,7 @@ object VulkanRenderingEngine: IRenderEngine {
         buffers.put(commandBuffers[currentFrame].address()).flip()
         submitInfo.pCommandBuffers(buffers)
 
+        vkResetFences(logicalDevice, inFlightFences[currentFrame])
         vkQueueSubmit(graphicsQueue, submitInfo, inFlightFences[currentFrame]).checkVKErrors()
     }
 
@@ -841,28 +988,78 @@ object VulkanRenderingEngine: IRenderEngine {
 
         presentInfo.pResults(null)
 
-        vkQueuePresentKHR(presentQueue, presentInfo)
+        val result = vkQueuePresentKHR(presentQueue, presentInfo)
+        if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+            recreateSwapchain()
+        }
+    }
+
+    private fun recreateSwapchain() {
+        // TODO: Handle window minimization
+        vkDeviceWaitIdle(logicalDevice)
+
+        cleanupSwapchain()
+
+        framebufferResized = false
+
+        createSwapchain()
+        createImageViews()
+        createRenderPass()
+        createGraphicsPipeline()
+        createFramebuffers()
+        createCommandBuffers()
+    }
+
+    private fun cleanupSwapchain() {
+        swapchainFramebuffers.forEach {
+            vkDestroyFramebuffer(logicalDevice, it, null)
+        }
+        useStack {
+            val pCommandBuffers = mallocPointer(commandBuffers.size)
+            commandBuffers.forEach { pCommandBuffers.put(it) }
+            pCommandBuffers.flip()
+            vkFreeCommandBuffers(logicalDevice, commandPool, pCommandBuffers)
+        }
+
+        vkDestroyPipeline(logicalDevice, graphicsPipeline, null)
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, null)
+        vkDestroyRenderPass(logicalDevice, renderPass, null)
+
+        for(view in swapchainImageViews) {
+            vkDestroyImageView(logicalDevice, view, null)
+        }
+        vkDestroySwapchainKHR(logicalDevice, swapchain, null)
+    }
+
+    private fun findMemoryType(typeFilter: Int, properties: VkMemoryPropertyFlags): Int {
+        return useStack {
+            val memoryProperties = VkPhysicalDeviceMemoryProperties.callocStack(this)
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, memoryProperties)
+
+            for(i in 0 until memoryProperties.memoryTypeCount()) {
+                if(typeFilter and (1 shl i) != 0 && (memoryProperties.memoryTypes()[i].propertyFlags() and properties) == properties) {
+                    return@useStack i
+                }
+            }
+
+            throw RuntimeException("Failed to find suitable memory type")
+        }
     }
 
     /**
      * Cleanup native objects
      */
     fun cleanup() {
+        cleanupSwapchain()
+
+        vkDestroyBuffer(logicalDevice, vertexBuffer, null)
+
         for(i in 0 until maxFramesInFlight) {
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], null)
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], null)
             vkDestroyFence(logicalDevice, inFlightFences[i], null)
         }
-        swapchainFramebuffers.forEach {
-            vkDestroyFramebuffer(logicalDevice, it, null)
-        }
-        vkDestroyPipeline(logicalDevice, graphicsPipeline, null)
-        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, null)
-        vkDestroyRenderPass(logicalDevice, renderPass, null)
-        for(view in swapchainImageViews) {
-            vkDestroyImageView(logicalDevice, view, null)
-        }
-        vkDestroySwapchainKHR(logicalDevice, swapchain, null)
+
         vkDestroyDevice(logicalDevice, null)
         if(enableValidationLayers) {
             EXTDebugUtils.vkDestroyDebugUtilsMessengerEXT(vulkan, debugger, null)

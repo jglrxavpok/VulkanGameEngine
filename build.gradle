@@ -18,6 +18,7 @@ repositories {
 dependencies {
     implementation 'com.github.jglrxavpok:JavaNursery:e80708550b'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+    implementation 'org.joml:joml:1.9.16'
     implementation "org.lwjgl:lwjgl:$lwjglVersion"
     implementation "org.lwjgl:lwjgl-assimp:$lwjglVersion"
     implementation "org.lwjgl:lwjgl-glfw:$lwjglVersion"
