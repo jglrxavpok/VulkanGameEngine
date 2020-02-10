@@ -16,6 +16,9 @@ typealias VkSemaphore = Long
 typealias VkFence = Long
 typealias VkDeviceMemory = Long
 typealias VkDeviceSize = Long
+typealias VkDescriptorSetLayout = Long
+typealias VkDescriptorPool = Long
+typealias VkDescriptorSet = Long
 
 typealias VkBufferUsageFlags = Int
 typealias VkMemoryPropertyFlags = Int

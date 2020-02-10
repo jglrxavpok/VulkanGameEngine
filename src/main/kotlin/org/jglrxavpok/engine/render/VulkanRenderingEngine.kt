@@ -45,10 +45,14 @@ object VulkanRenderingEngine: IRenderEngine {
     private val memoryStack = MemoryStack.create()
 
     val vertices = listOf(
-        Vertex(Vector2f(0.0f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f)),
-        Vertex(Vector2f(0.5f, 0.5f), Vector3f(1.0f, 1.0f, 1.0f)),
-        Vertex(Vector2f(-0.5f, 0.5f), Vector3f(0.0f, 0.0f, 1.0f))
+        Vertex(Vector2f(-0.5f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f)),
+        Vertex(Vector2f(0.5f, -0.5f), Vector3f(0.0f, 1.0f, 0.0f)),
+        Vertex(Vector2f(0.5f, 0.5f), Vector3f(0.0f, 0.0f, 1.0f)),
+        Vertex(Vector2f(-0.5f, 0.5f), Vector3f(1.0f, 1.0f, 1.0f))
     );
+    val indices = listOf<UInt>(
+        0u, 1u, 2u, 2u, 3u, 0u
+    )
 
     // Start of Vulkan objects
 
@@ -69,6 +73,9 @@ object VulkanRenderingEngine: IRenderEngine {
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
     private var vertexBuffer: VkBuffer = -1
+    private var indexBuffer: VkBuffer = -1
+    private var descriptorPool: VkDescriptorPool = -1
+    private var uboDescriptorLayout: VkDescriptorSetLayout = -1
     private lateinit var imageAvailableSemaphores: List<VkSemaphore>
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
     private lateinit var inFlightFences: List<VkFence>
@@ -77,6 +84,9 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var swapchainImageViews: List<VkImageView>
     private lateinit var swapchainFramebuffers: List<VkFramebuffer>
     private lateinit var commandBuffers: List<VkCommandBuffer>
+    private lateinit var uniformBuffers: List<VkBuffer>
+    private lateinit var uniformBufferMemories: List<VkDeviceMemory>
+    private lateinit var descriptorSets: List<VkDescriptorSet>
 
     private var currentFrame = 0
 
@@ -115,6 +125,10 @@ object VulkanRenderingEngine: IRenderEngine {
         createFramebuffers()
         createCommandPool()
         createVertexBuffer()
+        createIndexBuffer()
+        createUniformBuffers()
+        createDescriptorPool()
+        createDescriptorSets()
         createCommandBuffers()
         createSyncingMechanisms()
     }
@@ -433,7 +447,7 @@ object VulkanRenderingEngine: IRenderEngine {
             rasterizer.lineWidth(1f)
 
             rasterizer.cullMode(VK_CULL_MODE_BACK_BIT)
-            rasterizer.frontFace(VK_FRONT_FACE_CLOCKWISE)
+            rasterizer.frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE)
 
             rasterizer.depthBiasEnable(false) // TODO: can be used for shadow mapping
 
@@ -465,6 +479,11 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(this)
             pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO)
+
+            uboDescriptorLayout = ShaderResource.createDescriptorSetLayout(0, this, logicalDevice, VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK10.VK_SHADER_STAGE_VERTEX_BIT)
+            val descriptorSetLayouts = mallocLong(1)
+            descriptorSetLayouts.put(0, uboDescriptorLayout)
+            pipelineLayoutInfo.pSetLayouts(descriptorSetLayouts)
 
             val pPipelineLayout = mallocLong(1)
             vkCreatePipelineLayout(logicalDevice, pipelineLayoutInfo, null, pPipelineLayout).checkVKErrors()
@@ -535,9 +554,119 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
+    /**
+     * Creates the uniform buffers for shaders, one per frame
+     */
+    private fun createUniformBuffers() {
+        useStack {
+            val bufferSize = UniformBufferObject.SizeOf
+            val bufferList = mutableListOf<VkBuffer>()
+            val memoryList = mutableListOf<VkDeviceMemory>()
+            for (i in swapchainImages.indices) {
+                val pBuffer = mallocLong(1)
+                val pMemory = mallocLong(1)
+                createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, pBuffer, pMemory)
+                bufferList += !pBuffer
+                memoryList += !pMemory
+            }
+            uniformBuffers = bufferList
+            uniformBufferMemories = memoryList
+        }
+    }
+
+    private fun createDescriptorSets() {
+        useStack {
+            val allocInfo = VkDescriptorSetAllocateInfo.callocStack(this)
+            allocInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO)
+            allocInfo.descriptorPool(descriptorPool)
+            val layouts = mallocLong(swapchainImages.size)
+            for (i in swapchainImages.indices) {
+                layouts.put(i, uboDescriptorLayout)
+            }
+            allocInfo.pSetLayouts(layouts)
+
+            val pSets = mallocLong(swapchainImages.size)
+            if(vkAllocateDescriptorSets(logicalDevice, allocInfo, pSets) != VK_SUCCESS) {
+                error("Failed to allocate descriptor sets")
+            }
+            descriptorSets = swapchainImages.indices.mapIndexed { index, _ -> pSets[index] }
+
+            for(i in swapchainImages.indices) {
+                val bufferInfo = VkDescriptorBufferInfo.callocStack(1, this)
+                bufferInfo.buffer(uniformBuffers[i])
+                bufferInfo.offset(0)
+                bufferInfo.range(UniformBufferObject.SizeOf)
+
+                val descriptorWrite = VkWriteDescriptorSet.callocStack(1, this)
+                descriptorWrite.sType(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
+                descriptorWrite.dstSet(descriptorSets[i])
+                descriptorWrite.dstBinding(0) // binding for our UBO
+                descriptorWrite.dstArrayElement(0) // 0 because we are not writing to an array
+
+                descriptorWrite.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                descriptorWrite.pBufferInfo(bufferInfo)
+
+                vkUpdateDescriptorSets(logicalDevice, descriptorWrite, null)
+            }
+        }
+    }
+
+    private fun createDescriptorPool() {
+        useStack {
+            val poolSize = VkDescriptorPoolSize.callocStack(1, this)
+            poolSize.type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+            poolSize.descriptorCount(swapchainImages.size) // one per frame
+
+            val poolInfo = VkDescriptorPoolCreateInfo.callocStack(this)
+            poolInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO)
+            poolInfo.pPoolSizes(poolSize)
+            poolInfo.maxSets(swapchainImages.size)
+
+            val pPool = mallocLong(1)
+            if(vkCreateDescriptorPool(logicalDevice, poolInfo, null, pPool) != VK_SUCCESS) {
+                error("Failed to create descriptor pool")
+            }
+            descriptorPool = !pPool
+        }
+    }
+
+
+    /**
+     * Creates the index buffer for Vulkan
+     */
+    private fun createIndexBuffer() {
+        useStack {
+            val bufferSize = (sizeof<Int>() * indices.size).toLong()
+            val buffer = malloc(bufferSize.toInt())
+            val fb = buffer.asIntBuffer()
+            for (index in indices) {
+                fb.put(index.toInt())
+            }
+            indexBuffer = uploadBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, buffer, bufferSize)
+        }
+    }
+
     private fun createVertexBuffer() {
         useStack {
             val bufferSize = (vertices.size * Vertex.SizeOf).toLong()
+            val buffer = malloc(bufferSize.toInt())
+            val fb = buffer.asFloatBuffer()
+            for (vertex in vertices) {
+                fb.put(vertex)
+            }
+            vertexBuffer = uploadBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer, bufferSize)
+        }
+    }
+
+    /**
+     * Stages a transfer to GPU memory with the given usage and data
+     *
+     * @param usage The type of buffer to create
+     * @param dataBuffer the data to fill the buffer with
+     * @param bufferSize the size of the data to upload, in bytes
+     */
+    private fun uploadBuffer(usage: VkBufferUsageFlags, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): VkBuffer {
+        return useStack {
             val pBuffer = mallocLong(1)
             val pMemory = mallocLong(1)
             createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, pBuffer, pMemory)
@@ -547,21 +676,21 @@ object VulkanRenderingEngine: IRenderEngine {
             val ppData = mallocPointer(1)
             vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, ppData).checkVKErrors()
             val data = ppData.get(0)
-            val buffer = malloc(bufferSize.toInt())
-            val fb = buffer.asFloatBuffer()
-            for (vertex in vertices) {
-                fb.put(vertex)
-            }
-            memCopy(memAddress(buffer), data, buffer.remaining().toLong())
+            val prevPos = dataBuffer.position()
+            dataBuffer.position(0)
+            memCopy(memAddress(dataBuffer), data, bufferSize)
+            dataBuffer.position(prevPos)
             vkUnmapMemory(logicalDevice, stagingBufferMemory)
 
-            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT or VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pBuffer, pMemory)
-            vertexBuffer = !pBuffer
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT or usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, pBuffer, pMemory)
+            val result = !pBuffer
 
-            copyBuffer(stagingBuffer, vertexBuffer, bufferSize)
+            copyBuffer(stagingBuffer, result, bufferSize)
 
             vkDestroyBuffer(logicalDevice, stagingBuffer, null)
             vkFreeMemory(logicalDevice, stagingBufferMemory, null)
+
+            result
         }
     }
 
@@ -689,7 +818,12 @@ object VulkanRenderingEngine: IRenderEngine {
                 pOffsets.flip()
                 vkCmdBindVertexBuffers(it, 0, pVertexBuffers, pOffsets)
 
-                vkCmdDraw(it, vertices.size, 1, 0, 0)
+                vkCmdBindIndexBuffer(it, indexBuffer, 0, VK_INDEX_TYPE_UINT32)
+
+                val pSets = mallocLong(1)
+                pSets.put(0, descriptorSets[index])
+                vkCmdBindDescriptorSets(it, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, pSets, null)
+                vkCmdDrawIndexed(it, indices.size, 1, 0, 0, 0);
 
                 vkCmdEndRenderPass(it)
 
@@ -938,12 +1072,34 @@ object VulkanRenderingEngine: IRenderEngine {
                 return@useStack
             }
 
+            updateUniformBuffer(!pImageIndex)
+
             graphicsQueueSubmit(!pImageIndex, currentFrame)
 
             present(!pImageIndex, currentFrame)
         }
 
         currentFrame = (currentFrame + 1) % maxFramesInFlight
+    }
+
+    private fun updateUniformBuffer(frameIndex: Int) {
+        val time = glfwGetTime()
+        val ubo = UniformBufferObject()
+        ubo.model.identity().rotate((time * Math.PI/2f).toFloat(), Vector3f(0f,0f,1f))
+        ubo.view.identity().lookAt(Vector3f(2f, 2f, 2f), Vector3f(0f, 0f, 0f), Vector3f(0f, 0f, 1f))
+        ubo.proj.identity().perspective((Math.PI/4f).toFloat(), swapchainExtent.width() / swapchainExtent.height().toFloat(), 0.1f, 10f)
+
+        ubo.proj.m11(ubo.proj.m11() * -1) // invert Y Axis (OpenGL -> Vulkan translation)
+
+        useStack {
+            val bufferSize = UniformBufferObject.SizeOf
+            val ppData = this.mallocPointer(1)
+            val data = ubo.write(this.malloc(bufferSize.toInt()))
+            vkMapMemory(logicalDevice, uniformBufferMemories[frameIndex], 0, bufferSize, 0, ppData)
+            data.position(0)
+            memCopy(memAddress(data), !ppData, bufferSize)
+            vkUnmapMemory(logicalDevice, uniformBufferMemories[frameIndex])
+        }
     }
 
     private fun MemoryStack.graphicsQueueSubmit(imageIndex: Int, currentFrame: Int) {
@@ -1007,10 +1163,19 @@ object VulkanRenderingEngine: IRenderEngine {
         createRenderPass()
         createGraphicsPipeline()
         createFramebuffers()
+        createUniformBuffers()
+        createDescriptorPool()
+        createDescriptorSets()
         createCommandBuffers()
     }
 
     private fun cleanupSwapchain() {
+        uniformBuffers.forEach {
+            vkDestroyBuffer(logicalDevice, it, null)
+        }
+        uniformBufferMemories.forEach {
+            vkFreeMemory(logicalDevice, it, null)
+        }
         swapchainFramebuffers.forEach {
             vkDestroyFramebuffer(logicalDevice, it, null)
         }
@@ -1053,6 +1218,7 @@ object VulkanRenderingEngine: IRenderEngine {
         cleanupSwapchain()
 
         vkDestroyBuffer(logicalDevice, vertexBuffer, null)
+        vkDestroyBuffer(logicalDevice, indexBuffer, null)
 
         for(i in 0 until maxFramesInFlight) {
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], null)
