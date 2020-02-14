@@ -19,7 +19,12 @@ typealias VkDeviceSize = Long
 typealias VkDescriptorSetLayout = Long
 typealias VkDescriptorPool = Long
 typealias VkDescriptorSet = Long
+typealias VkSampler = Long
 
+typealias VkPipelineStageFlags = Int
+typealias VkFormat = Int
+typealias VkImageLayout = Int
+typealias VkImageUsageFlags = Int
 typealias VkBufferUsageFlags = Int
 typealias VkMemoryPropertyFlags = Int
 typealias VkPresentModeKHR = Int

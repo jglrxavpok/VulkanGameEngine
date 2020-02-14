@@ -12,22 +12,23 @@ import org.lwjgl.vulkan.VkVertexInputBindingDescription
 import java.nio.FloatBuffer
 
 data class Vertex(val pos: Vector2fc = Vector2f(),
-                  val color: Vector3fc = Vector3f()) {
+                  val color: Vector3fc = Vector3f(),
+                  val texCoords: Vector2f = Vector2f()) {
 
     companion object {
-        val SizeOf = 5* sizeof<Float>()
+        val SizeOf = 7* sizeof<Float>()
         // TODO: Builder methods to specify vertices?
 
         fun getBindingDescription(stack: MemoryStack): VkVertexInputBindingDescription.Buffer {
             val bindingDescription = VkVertexInputBindingDescription.callocStack(1, stack)
             bindingDescription.binding(0) // index
-            bindingDescription.stride(5*sizeof<Float>()) // size
+            bindingDescription.stride(SizeOf) // size
             bindingDescription.inputRate(VK_VERTEX_INPUT_RATE_VERTEX)
             return bindingDescription
         }
 
         fun getAttributeDescriptions(stack: MemoryStack): VkVertexInputAttributeDescription.Buffer {
-            val descriptions = VkVertexInputAttributeDescription.callocStack(2, stack)
+            val descriptions = VkVertexInputAttributeDescription.callocStack(3, stack)
             descriptions[0].binding(0)
             descriptions[0].location(0) // pos
             descriptions[0].format(VK_FORMAT_R32G32_SFLOAT)
@@ -38,6 +39,11 @@ data class Vertex(val pos: Vector2fc = Vector2f(),
             descriptions[1].format(VK_FORMAT_R32G32B32_SFLOAT)
             descriptions[1].offset(2*sizeof<Float>())
 
+            descriptions[2].binding(0)
+            descriptions[2].location(2) // texCoords
+            descriptions[2].format(VK_FORMAT_R32G32_SFLOAT)
+            descriptions[2].offset(5*sizeof<Float>())
+
             return descriptions
         }
 
@@ -47,6 +53,8 @@ data class Vertex(val pos: Vector2fc = Vector2f(),
             this.put(vertex.color.x())
             this.put(vertex.color.y())
             this.put(vertex.color.z())
+            this.put(vertex.texCoords.x())
+            this.put(vertex.texCoords.y())
         }
     }
 }

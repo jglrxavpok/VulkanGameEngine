@@ -23,23 +23,6 @@ abstract class ShaderResource() {
     abstract fun read(from: ByteBuffer): ShaderResource
 
     companion object {
-        fun createDescriptorSetLayout(bindingIndex: Int, stack: MemoryStack, logicalDevice: VkDevice, bindingType: Int, stageFlags: Int): VkDescriptorSetLayout {
-            val binding = VkDescriptorSetLayoutBinding.callocStack(1, stack)
-            binding.binding(bindingIndex)
-            binding.descriptorType(bindingType)
-            binding.descriptorCount(1)
-            binding.stageFlags(stageFlags)
 
-            val createInfo = VkDescriptorSetLayoutCreateInfo.callocStack(stack)
-            createInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
-            createInfo.pBindings(binding)
-
-            val pBuffer = stack.mallocLong(1)
-            if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, null, pBuffer) != VK_SUCCESS) {
-                error("Failed to create descriptor set layout")
-            }
-
-            return !pBuffer
-        }
     }
 }
