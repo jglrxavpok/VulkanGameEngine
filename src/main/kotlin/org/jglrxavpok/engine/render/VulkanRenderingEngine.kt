@@ -46,13 +46,19 @@ object VulkanRenderingEngine: IRenderEngine {
     private val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
     val vertices = listOf(
-        Vertex(Vector2f(-0.5f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f), Vector2f(1f, 0f)),
-        Vertex(Vector2f(0.5f, -0.5f), Vector3f(0.0f, 1.0f, 0.0f), Vector2f(0f, 0f)),
-        Vertex(Vector2f(0.5f, 0.5f), Vector3f(0.0f, 0.0f, 1.0f), Vector2f(0f, 1f)),
-        Vertex(Vector2f(-0.5f, 0.5f), Vector3f(1.0f, 1.0f, 1.0f), Vector2f(1f, 1f))
+        Vertex(Vector3f(-0.5f, -0.5f, 0.0f), Vector3f(1.0f, 0.0f, 0.0f), Vector2f(0.0f, 0.0f)),
+        Vertex(Vector3f(0.5f, -0.5f, 0.0f), Vector3f(0.0f, 1.0f, 0.0f), Vector2f(1.0f, 0.0f)),
+        Vertex(Vector3f(0.5f, 0.5f, 0.0f), Vector3f(0.0f, 0.0f, 1.0f), Vector2f(1.0f, 1.0f)),
+        Vertex(Vector3f(-0.5f, 0.5f, 0.0f), Vector3f(1.0f, 1.0f, 1.0f), Vector2f(0.0f, 1.0f)),
+
+        Vertex(Vector3f(-0.5f, -0.5f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f), Vector2f(0.0f, 0.0f)),
+        Vertex(Vector3f(0.5f, -0.5f, -0.5f), Vector3f(0.0f, 1.0f, 0.0f), Vector2f(1.0f, 0.0f)),
+        Vertex(Vector3f(0.5f, 0.5f, -0.5f), Vector3f(0.0f, 0.0f, 1.0f), Vector2f(1.0f, 1.0f)),
+        Vertex(Vector3f(-0.5f, 0.5f, -0.5f), Vector3f(1.0f, 1.0f, 1.0f), Vector2f(0.0f, 1.0f))
     );
     val indices = listOf<UInt>(
-        0u, 1u, 2u, 2u, 3u, 0u
+        0u, 1u, 2u, 2u, 3u, 0u,
+        4u, 5u, 6u, 6u, 7u, 4u
     )
 
     // Start of Vulkan objects
@@ -83,6 +89,11 @@ object VulkanRenderingEngine: IRenderEngine {
     private var textureImageMemory: VkDeviceMemory = -1
     private var textureImageView: VkImageView = -1
     private var textureSampler: VkSampler = -1
+
+    private var depthImage: VkImage = -1
+    private var depthImageMemory: VkDeviceMemory = -1
+    private var depthImageView: VkImageView = -1
+
     private lateinit var imageAvailableSemaphores: List<VkSemaphore>
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
     private lateinit var inFlightFences: List<VkFence>
@@ -129,8 +140,9 @@ object VulkanRenderingEngine: IRenderEngine {
         createImageViews()
         createRenderPass()
         createGraphicsPipeline()
-        createFramebuffers()
         createCommandPool()
+        createDepthResources()
+        createFramebuffers()
         createTextureImage()
         createTextureImageView()
         createTextureSampler()
@@ -328,7 +340,8 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createRenderPass() {
         useStack {
-            val colorAttachment = VkAttachmentDescription.callocStack(1, this)
+            val attachments = VkAttachmentDescription.callocStack(2, this)
+            val colorAttachment = attachments.get(0)
             colorAttachment.format(swapchainFormat)
             colorAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
 
@@ -342,9 +355,24 @@ object VulkanRenderingEngine: IRenderEngine {
             colorAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
             colorAttachment.finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
 
+            val depthAttachment = attachments.get(1)
+            depthAttachment.format(findDepthFormat())
+            depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
+            depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
+            depthAttachment.storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+            depthAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+            depthAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+            depthAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+            depthAttachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+
+
             val colorAttachmentRef = VkAttachmentReference.callocStack(1, this)
             colorAttachmentRef.attachment(0)
             colorAttachmentRef.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
+            val depthAttachmentRef = VkAttachmentReference.callocStack(this)
+            depthAttachmentRef.attachment(1)
+            depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 
             // TODO: Multiple subpass for post-processing
             val subpass = VkSubpassDescription.callocStack(1, this)
@@ -352,6 +380,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             subpass.colorAttachmentCount(1)
             subpass.pColorAttachments(colorAttachmentRef)
+            subpass.pDepthStencilAttachment(depthAttachmentRef)
 
             val dependency = VkSubpassDependency.callocStack(1, this)
             dependency.srcSubpass(VK_SUBPASS_EXTERNAL)
@@ -365,7 +394,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val renderPassInfo = VkRenderPassCreateInfo.callocStack(this)
             renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO)
-            renderPassInfo.pAttachments(colorAttachment)
+            renderPassInfo.pAttachments(attachments)
             renderPassInfo.pSubpasses(subpass)
             renderPassInfo.pDependencies(dependency)
 
@@ -502,10 +531,21 @@ object VulkanRenderingEngine: IRenderEngine {
             vkCreatePipelineLayout(logicalDevice, pipelineLayoutInfo, null, pPipelineLayout).checkVKErrors()
             pipelineLayout = !pPipelineLayout
 
+            val depthStencil = VkPipelineDepthStencilStateCreateInfo.callocStack(this)
+            depthStencil.sType(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO)
+            depthStencil.depthTestEnable(true)
+            depthStencil.depthWriteEnable(true)
+            depthStencil.depthCompareOp(VK_COMPARE_OP_LESS)
+
+            depthStencil.depthBoundsTestEnable(false)
+            // TODO: change if stencil enabled
+            depthStencil.stencilTestEnable(false)
+
             val pipelineInfo = VkGraphicsPipelineCreateInfo.callocStack(1, this)
             pipelineInfo.sType(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO)
             pipelineInfo.pStages(shaderStages)
             pipelineInfo.layout(pipelineLayout)
+            pipelineInfo.pDepthStencilState(depthStencil)
 
             pipelineInfo.pColorBlendState(colorBlending)
             pipelineInfo.pVertexInputState(vertexInputInfo)
@@ -533,8 +573,9 @@ object VulkanRenderingEngine: IRenderEngine {
         val framebuffers = mutableListOf<VkFramebuffer>()
         useStack {
             swapchainImageViews.forEach {
-                val attachments = mallocLong(1)
+                val attachments = mallocLong(2)
                 attachments.put(it)
+                attachments.put(depthImageView)
                 attachments.rewind()
 
                 val framebufferInfo = VkFramebufferCreateInfo.callocStack(this)
@@ -701,14 +742,14 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createImageView(image: VkImage, format: VkFormat): VkImageView {
+    private fun createImageView(image: VkImage, format: VkFormat, aspect: VkImageAspectFlags = VK_IMAGE_ASPECT_COLOR_BIT): VkImageView {
         return useStack {
             val viewInfo = VkImageViewCreateInfo.callocStack(this)
             viewInfo.sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO)
             viewInfo.image(image)
             viewInfo.viewType(VK_IMAGE_VIEW_TYPE_2D)
             viewInfo.format(format)
-            viewInfo.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+            viewInfo.subresourceRange().aspectMask(aspect)
             viewInfo.subresourceRange().baseMipLevel(0)
             viewInfo.subresourceRange().baseArrayLayer(0)
             viewInfo.subresourceRange().levelCount(1)
@@ -721,6 +762,33 @@ object VulkanRenderingEngine: IRenderEngine {
 
             !pView
         }
+    }
+
+    private fun createDepthResources() = useStack {
+        val depthFormat = findDepthFormat()
+        val pImage = mallocLong(1)
+        val pMemory = mallocLong(1)
+        createImage(swapchainExtent.width(), swapchainExtent.height(), depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, pImage, pMemory)
+        depthImage = !pImage
+        depthImageMemory = !pMemory
+        depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT)
+    }
+
+    private fun hasStencilComponent(format: VkFormat) = format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT
+
+    private fun findDepthFormat() = findSupportedFormat(VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT)
+
+    private fun findSupportedFormat(tiling: VkImageTiling, features: VkFormatFeatureFlags, vararg candidates: VkFormat): VkFormat = useStack {
+        val props = VkFormatProperties.callocStack(this)
+        for(format in candidates) {
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, props)
+            if(tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures() and features) == features) {
+                return@useStack format
+            } else if(tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures() and features) == features) {
+                return@useStack format
+            }
+        }
+        error("Could not find supported format")
     }
 
     private fun createTextureImage() {
@@ -794,7 +862,16 @@ object VulkanRenderingEngine: IRenderEngine {
             barrier.dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
 
             barrier.image(image)
-            barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+
+            if(newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+                barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT)
+
+                if(hasStencilComponent(format)) {
+                    barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT or VK_IMAGE_ASPECT_STENCIL_BIT)
+                }
+            } else {
+                barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+            }
             barrier.subresourceRange().baseMipLevel(0)
             barrier.subresourceRange().levelCount(1)
             barrier.subresourceRange().baseArrayLayer(0)
@@ -815,6 +892,12 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT
                 destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+            } else if(oldLayout == VK_IMAGE_LAYOUT_UNDEFINED  && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+                barrier.srcAccessMask(0)
+                barrier.dstAccessMask(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT or VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT)
+
+                sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
             } else {
                 error("Unsupported layout transition")
             }
@@ -1052,6 +1135,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 vkBeginCommandBuffer(it, beginInfo).checkVKErrors()
 
+                val clearValues = VkClearValue.callocStack(2, this)
+                clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0f, 0f, 0f, 1f)))
+                clearValues.get(1).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+
                 val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
                 renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
                 renderPassInfo.renderPass(renderPass)
@@ -1059,10 +1146,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 renderPassInfo.renderArea().offset(VkOffset2D.callocStack(this).set(0,0))
                 renderPassInfo.renderArea().extent(swapchainExtent)
-
-                val clearColor = VkClearValue.callocStack(1, this)
-                clearColor.color(VkClearColorValue.callocStack(this).float32(floats(0f, 0f, 0f, 1f)))
-                renderPassInfo.pClearValues(clearColor)
+                renderPassInfo.pClearValues(clearValues)
 
                 vkCmdBeginRenderPass(it, renderPassInfo, VK_SUBPASS_CONTENTS_INLINE) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
@@ -1422,6 +1506,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createImageViews()
         createRenderPass()
         createGraphicsPipeline()
+        createDepthResources()
         createFramebuffers()
         createUniformBuffers()
         createDescriptorPool()
@@ -1430,6 +1515,10 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun cleanupSwapchain() {
+        vkDestroyImageView(logicalDevice, depthImageView, null)
+        vkFreeMemory(logicalDevice, depthImageMemory, null)
+        vkDestroyImage(logicalDevice, depthImage, null)
+
         uniformBuffers.forEach {
             vkDestroyBuffer(logicalDevice, it, null)
         }

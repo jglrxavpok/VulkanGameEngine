@@ -21,6 +21,9 @@ typealias VkDescriptorPool = Long
 typealias VkDescriptorSet = Long
 typealias VkSampler = Long
 
+typealias VkImageAspectFlags = Int
+typealias VkFormatFeatureFlags = Int
+typealias VkImageTiling = Int
 typealias VkPipelineStageFlags = Int
 typealias VkFormat = Int
 typealias VkImageLayout = Int
