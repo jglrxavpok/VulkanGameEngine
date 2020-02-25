@@ -26,6 +26,8 @@ import java.nio.ByteBuffer
 import org.jglrxavpok.engine.render.Vertex.Companion.put
 import org.lwjgl.stb.STBImage
 import java.nio.LongBuffer
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Vulkan implementation of the render engine
@@ -91,7 +93,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
     // End of Vulkan objects
     private lateinit var model: Model
+    private lateinit var camera: Camera
 
+    private var previousPosX = 0.0
+    private var previousPosY = 0.0
 
     /**
      * Initializes the render engine
@@ -110,6 +115,17 @@ object VulkanRenderingEngine: IRenderEngine {
         glfwSetWindowSizeCallback(windowPointer) { window, width, height ->
             framebufferResized = true
         }
+        glfwSetCursorPosCallback(windowPointer) { window, xpos, ypos ->
+            val dx = xpos - previousPosX
+            val dy = ypos - previousPosY
+
+            camera.yaw += dx.toFloat()*.0003f
+            camera.pitch += dy.toFloat()*.0003f
+
+            previousPosX = xpos
+            previousPosY = ypos
+        }
+        glfwSetInputMode(windowPointer, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
 
         // init Vulkan
         this.enableValidationLayers = enableValidationLayers
@@ -121,6 +137,7 @@ object VulkanRenderingEngine: IRenderEngine {
         pickGraphicsCard()
         createLogicalDevice()
         createSwapchain()
+        createCamera()
         createImageViews()
         createRenderPass()
         createGraphicsPipeline()
@@ -309,6 +326,11 @@ object VulkanRenderingEngine: IRenderEngine {
             vkGetSwapchainImagesKHR(logicalDevice, swapchain, pCount, pImages)
             swapchainImages = pImages.it().toList()
         }
+    }
+
+    private fun createCamera() {
+        camera = Camera(swapchainExtent.width(), swapchainExtent.height())
+        camera.position.set(2f, 2f, 2f)
     }
 
     private fun createImageViews() {
@@ -1387,11 +1409,12 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun updateUniformBuffer(frameIndex: Int) {
         val time = glfwGetTime()
-        ubo.model.identity().rotate((time * Math.PI/2f).toFloat(), Vector3f(0f,0f,1f))
-        ubo.view.identity().lookAt(Vector3f(2f, 2f, 2f), Vector3f(0f, 0f, 0f), Vector3f(0f, 0f, 1f))
-        ubo.proj.identity().perspective((Math.PI/4f).toFloat(), swapchainExtent.width() / swapchainExtent.height().toFloat(), 0.1f, 10f)
+        /*val angle = 0f(time * Math.PI/2f).toFloat()
+        camera.position.set(cos(angle) * 2f, sin(angle) * 2f, 2f)
+        camera.forward.set(-camera.position.x(), -camera.position.y(), -camera.position.z())*/
+        camera.updateUBO(ubo)
 
-        ubo.proj.m11(ubo.proj.m11() * -1) // invert Y Axis (OpenGL -> Vulkan translation)
+        ubo.model.identity()
 
         useStack {
             val bufferSize = UniformBufferObject.SizeOf
@@ -1462,6 +1485,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
         createSwapchain()
         createImageViews()
+        createCamera()
         createRenderPass()
         createGraphicsPipeline()
         createDepthResources()
