@@ -125,6 +125,9 @@ object VulkanRenderingEngine: IRenderEngine {
             previousPosX = xpos
             previousPosY = ypos
         }
+        glfwSetKeyCallback(windowPointer) { window, key, scancode, action, mods ->
+
+        }
         glfwSetInputMode(windowPointer, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
 
         // init Vulkan
@@ -330,7 +333,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createCamera() {
         camera = Camera(swapchainExtent.width(), swapchainExtent.height())
-        camera.position.set(2f, 2f, 2f)
+        camera.position.set(2f, 2f, 0.3f)
     }
 
     private fun createImageViews() {
@@ -1408,10 +1411,29 @@ object VulkanRenderingEngine: IRenderEngine {
     private val ubo = UniformBufferObject()
 
     private fun updateUniformBuffer(frameIndex: Int) {
-        val time = glfwGetTime()
-        /*val angle = 0f(time * Math.PI/2f).toFloat()
-        camera.position.set(cos(angle) * 2f, sin(angle) * 2f, 2f)
-        camera.forward.set(-camera.position.x(), -camera.position.y(), -camera.position.z())*/
+        var forward = 0f
+        var strafe = 0f
+        if(glfwGetKey(windowPointer, GLFW_KEY_W) == GLFW_PRESS) {
+            forward -= 1f
+        }
+        if(glfwGetKey(windowPointer, GLFW_KEY_S) == GLFW_PRESS) {
+            forward += 1f
+        }
+        if(glfwGetKey(windowPointer, GLFW_KEY_A) == GLFW_PRESS) {
+            strafe += 1f
+        }
+        if(glfwGetKey(windowPointer, GLFW_KEY_D) == GLFW_PRESS) {
+            strafe -= 1f
+        }
+
+        val direction by lazy { Vector3f() }
+        if(strafe != 0f || forward != 0f) {
+            direction.set(strafe, forward, 0f)
+            direction/*.normalize()*/.rotateAxis(-camera.yaw, 0f, 0f, 1f)
+            val speed = 0.001f
+            direction.mul(speed)
+            camera.position.add(direction)
+        }
         camera.updateUBO(ubo)
 
         ubo.model.identity()
