@@ -18,6 +18,7 @@ inline fun <reified T> sizeof() =
         Short::class -> 2
         Float::class -> 4
         Int::class -> 4
+        UInt::class -> 4
         Char::class -> 4
         Long::class -> 8
         Double::class -> 8

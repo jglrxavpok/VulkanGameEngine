@@ -45,26 +45,9 @@ object VulkanRenderingEngine: IRenderEngine {
     private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
     private val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
-    val vertices = listOf(
-        Vertex(Vector3f(-0.5f, -0.5f, 0.0f), Vector3f(1.0f, 0.0f, 0.0f), Vector2f(0.0f, 0.0f)),
-        Vertex(Vector3f(0.5f, -0.5f, 0.0f), Vector3f(0.0f, 1.0f, 0.0f), Vector2f(1.0f, 0.0f)),
-        Vertex(Vector3f(0.5f, 0.5f, 0.0f), Vector3f(0.0f, 0.0f, 1.0f), Vector2f(1.0f, 1.0f)),
-        Vertex(Vector3f(-0.5f, 0.5f, 0.0f), Vector3f(1.0f, 1.0f, 1.0f), Vector2f(0.0f, 1.0f)),
-
-        Vertex(Vector3f(-0.5f, -0.5f, -0.5f), Vector3f(1.0f, 0.0f, 0.0f), Vector2f(0.0f, 0.0f)),
-        Vertex(Vector3f(0.5f, -0.5f, -0.5f), Vector3f(0.0f, 1.0f, 0.0f), Vector2f(1.0f, 0.0f)),
-        Vertex(Vector3f(0.5f, 0.5f, -0.5f), Vector3f(0.0f, 0.0f, 1.0f), Vector2f(1.0f, 1.0f)),
-        Vertex(Vector3f(-0.5f, 0.5f, -0.5f), Vector3f(1.0f, 1.0f, 1.0f), Vector2f(0.0f, 1.0f))
-    );
-    val indices = listOf<UInt>(
-        0u, 1u, 2u, 2u, 3u, 0u,
-        4u, 5u, 6u, 6u, 7u, 4u
-    )
-
     // Start of Vulkan objects
 
     private lateinit var vulkan: VkInstance
-
     private var debugger: VkDebugUtilsMessengerEXT = NULL
 
     private var surface: VkSurfaceKHR = NULL
@@ -79,8 +62,6 @@ object VulkanRenderingEngine: IRenderEngine {
     private var pipelineLayout: VkPipelineLayout = -1
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
-    private var vertexBuffer: VkBuffer = -1
-    private var indexBuffer: VkBuffer = -1
     private var descriptorPool: VkDescriptorPool = -1
 
     private var descriptorLayout: VkDescriptorSetLayout = -1
@@ -109,6 +90,8 @@ object VulkanRenderingEngine: IRenderEngine {
     private var currentFrame = 0
 
     // End of Vulkan objects
+    private lateinit var model: Model
+
 
     /**
      * Initializes the render engine
@@ -122,7 +105,8 @@ object VulkanRenderingEngine: IRenderEngine {
         }
         val mode = glfwGetVideoMode(glfwGetPrimaryMonitor())!!
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
-        windowPointer = glfwCreateWindow(mode.width(), mode.height(), gameInfo.name, glfwGetPrimaryMonitor(), NULL)
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE)
+        windowPointer = glfwCreateWindow(mode.width(), mode.height(), gameInfo.name, NULL, NULL)
         glfwSetWindowSizeCallback(windowPointer) { window, width, height ->
             framebufferResized = true
         }
@@ -146,8 +130,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createTextureImage()
         createTextureImageView()
         createTextureSampler()
-        createVertexBuffer()
-        createIndexBuffer()
+        loadModel()
         createUniformBuffers()
         createDescriptorPool()
         createDescriptorSets()
@@ -794,7 +777,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createTextureImage() {
         useStack {
             // read file bytes
-            val textureData = javaClass.getResource("/textures/texture.jpg").readBytes()
+            val textureData = javaClass.getResource("/textures/chalet.jpg").readBytes()
             val textureDataBuffer = malloc(textureData.size)
             textureDataBuffer.put(textureData)
             textureDataBuffer.position(0)
@@ -959,31 +942,8 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    /**
-     * Creates the index buffer for Vulkan
-     */
-    private fun createIndexBuffer() {
-        useStack {
-            val bufferSize = (sizeof<Int>() * indices.size).toLong()
-            val buffer = malloc(bufferSize.toInt())
-            val fb = buffer.asIntBuffer()
-            for (index in indices) {
-                fb.put(index.toInt())
-            }
-            indexBuffer = uploadBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, buffer, bufferSize)
-        }
-    }
-
-    private fun createVertexBuffer() {
-        useStack {
-            val bufferSize = (vertices.size * Vertex.SizeOf).toLong()
-            val buffer = malloc(bufferSize.toInt())
-            val fb = buffer.asFloatBuffer()
-            for (vertex in vertices) {
-                fb.put(vertex)
-            }
-            vertexBuffer = uploadBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer, bufferSize)
-        }
+    private fun loadModel() {
+        model = Model("/models/chalet.obj")
     }
 
     /**
@@ -993,7 +953,7 @@ object VulkanRenderingEngine: IRenderEngine {
      * @param dataBuffer the data to fill the buffer with
      * @param bufferSize the size of the data to upload, in bytes
      */
-    private fun uploadBuffer(usage: VkBufferUsageFlags, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): VkBuffer {
+    fun uploadBuffer(usage: VkBufferUsageFlags, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): VkBuffer {
         return useStack {
             val pBuffer = mallocLong(1)
             val pMemory = mallocLong(1)
@@ -1152,20 +1112,18 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 vkCmdBindPipeline(it, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
 
-                val pVertexBuffers = mallocLong(1)
-                pVertexBuffers.put(vertexBuffer)
-                pVertexBuffers.flip()
-                val pOffsets = mallocLong(1)
-                pOffsets.put(0L)
-                pOffsets.flip()
-                vkCmdBindVertexBuffers(it, 0, pVertexBuffers, pOffsets)
-
-                vkCmdBindIndexBuffer(it, indexBuffer, 0, VK_INDEX_TYPE_UINT32)
-
                 val pSets = mallocLong(1)
                 pSets.put(0, descriptorSets[index])
-                vkCmdBindDescriptorSets(it, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, pSets, null)
-                vkCmdDrawIndexed(it, indices.size, 1, 0, 0, 0);
+                VK10.vkCmdBindDescriptorSets(
+                    it,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipelineLayout,
+                    0,
+                    pSets,
+                    null
+                )
+                // TODO: rendering
+                model.record(it)
 
                 vkCmdEndRenderPass(it)
 
@@ -1568,9 +1526,6 @@ object VulkanRenderingEngine: IRenderEngine {
 
         vkDestroySampler(logicalDevice, textureSampler, null)
         vkDestroyImageView(logicalDevice, textureImageView, null)
-
-        vkDestroyBuffer(logicalDevice, vertexBuffer, null)
-        vkDestroyBuffer(logicalDevice, indexBuffer, null)
 
         for(i in 0 until maxFramesInFlight) {
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], null)
