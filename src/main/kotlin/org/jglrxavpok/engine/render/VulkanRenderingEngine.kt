@@ -3,7 +3,6 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
-import org.joml.Vector2f
 import org.joml.Vector3f
 import org.lwjgl.PointerBuffer
 import org.lwjgl.glfw.GLFW.*
@@ -23,11 +22,13 @@ import org.lwjgl.vulkan.EXTDebugUtils.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EX
 import org.lwjgl.vulkan.KHRSurface.*
 import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
-import org.jglrxavpok.engine.render.Vertex.Companion.put
+import org.jglrxavpok.engine.scene.Scene
 import org.lwjgl.stb.STBImage
 import java.nio.LongBuffer
-import kotlin.math.cos
-import kotlin.math.sin
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 /**
  * Vulkan implementation of the render engine
@@ -92,16 +93,21 @@ object VulkanRenderingEngine: IRenderEngine {
     private var currentFrame = 0
 
     // End of Vulkan objects
-    private lateinit var model: Model
     private lateinit var camera: Camera
 
     private var previousPosX = 0.0
     private var previousPosY = 0.0
 
+    private var scene: Scene? = null
+    private val frameActions = LinkedBlockingQueue<() -> Unit>()
+    private var renderThread: Thread? = null
+    private val initSemaphore = Semaphore(1).apply { acquire() }
+
     /**
      * Initializes the render engine
      */
     fun init(gameInfo: GameInformation, enableValidationLayers: Boolean = true) {
+        renderThread = Thread.currentThread()
         Configuration.DEBUG.set(true)
         Configuration.DISABLE_CHECKS.set(false)
         Configuration.DISABLE_FUNCTION_CHECKS.set(false)
@@ -115,12 +121,13 @@ object VulkanRenderingEngine: IRenderEngine {
         glfwSetWindowSizeCallback(windowPointer) { window, width, height ->
             framebufferResized = true
         }
+
         glfwSetCursorPosCallback(windowPointer) { window, xpos, ypos ->
             val dx = xpos - previousPosX
             val dy = ypos - previousPosY
 
-            camera.yaw += dx.toFloat()*.0003f
-            camera.pitch += dy.toFloat()*.0003f
+            camera.yaw += dx.toFloat()*.003f
+            camera.pitch += dy.toFloat()*.003f
 
             previousPosX = xpos
             previousPosY = ypos
@@ -129,6 +136,12 @@ object VulkanRenderingEngine: IRenderEngine {
 
         }
         glfwSetInputMode(windowPointer, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
+
+        val xpos = DoubleArray(1)
+        val ypos = DoubleArray(1)
+        glfwGetCursorPos(windowPointer, xpos, ypos)
+        previousPosX = xpos[0]
+        previousPosY = ypos[0]
 
         // init Vulkan
         this.enableValidationLayers = enableValidationLayers
@@ -150,12 +163,13 @@ object VulkanRenderingEngine: IRenderEngine {
         createTextureImage()
         createTextureImageView()
         createTextureSampler()
-        loadModel()
         createUniformBuffers()
         createDescriptorPool()
         createDescriptorSets()
         createCommandBuffers()
         createSyncingMechanisms()
+
+        initSemaphore.release()
     }
 
     private fun initVulkanInstance(gameInfo: GameInformation, enableValidationLayers: Boolean) {
@@ -333,7 +347,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createCamera() {
         camera = Camera(swapchainExtent.width(), swapchainExtent.height())
-        camera.position.set(2f, 2f, 0.3f)
+        camera.position.set(2f, 0f, -25.0f)
     }
 
     private fun createImageViews() {
@@ -802,7 +816,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createTextureImage() {
         useStack {
             // read file bytes
-            val textureData = javaClass.getResource("/textures/chalet.jpg").readBytes()
+            val textureData = javaClass.getResource("/textures/texture.jpg").readBytes()
             val textureDataBuffer = malloc(textureData.size)
             textureDataBuffer.put(textureData)
             textureDataBuffer.position(0)
@@ -967,10 +981,6 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun loadModel() {
-        model = Model("/models/chalet.obj")
-    }
-
     /**
      * Stages a transfer to GPU memory with the given usage and data
      *
@@ -1112,47 +1122,67 @@ object VulkanRenderingEngine: IRenderEngine {
 
 
             // recording
-            commandBuffers.forEachIndexed { index, it ->
-                val beginInfo = VkCommandBufferBeginInfo.callocStack(this)
-                beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO)
-                beginInfo.flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT)
-                beginInfo.pInheritanceInfo(null)
+            recordCommandBuffers()
+        }
+    }
 
-                vkBeginCommandBuffer(it, beginInfo).checkVKErrors()
+    fun requestCommandBufferRecreation() {
+        nextFrame {
+            destroyCommandBuffers()
+            createCommandBuffers()
+            println("recreate plz")
+        }
+    }
 
-                val clearValues = VkClearValue.callocStack(2, this)
-                clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0f, 0f, 0f, 1f)))
-                clearValues.get(1).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+    private fun recordCommandBuffers() {
+        synchronized(commandBuffers) {
+            useStack {
+                commandBuffers.forEachIndexed { index, commandBuffer ->
+                    val beginInfo = VkCommandBufferBeginInfo.callocStack(this)
+                    beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO)
+                    beginInfo.flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT)
+                    beginInfo.pInheritanceInfo(null)
 
-                val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
-                renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
-                renderPassInfo.renderPass(renderPass)
-                renderPassInfo.framebuffer(swapchainFramebuffers[index])
+                    vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
 
-                renderPassInfo.renderArea().offset(VkOffset2D.callocStack(this).set(0,0))
-                renderPassInfo.renderArea().extent(swapchainExtent)
-                renderPassInfo.pClearValues(clearValues)
+                    val clearValues = VkClearValue.callocStack(2, this)
+                    clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(1).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
 
-                vkCmdBeginRenderPass(it, renderPassInfo, VK_SUBPASS_CONTENTS_INLINE) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
+                    val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
+                    renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
+                    renderPassInfo.renderPass(renderPass)
+                    renderPassInfo.framebuffer(swapchainFramebuffers[index])
 
-                vkCmdBindPipeline(it, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
+                    renderPassInfo.renderArea().offset(VkOffset2D.callocStack(this).set(0, 0))
+                    renderPassInfo.renderArea().extent(swapchainExtent)
+                    renderPassInfo.pClearValues(clearValues)
 
-                val pSets = mallocLong(1)
-                pSets.put(0, descriptorSets[index])
-                VK10.vkCmdBindDescriptorSets(
-                    it,
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    pipelineLayout,
-                    0,
-                    pSets,
-                    null
-                )
-                // TODO: rendering
-                model.record(it)
+                    vkCmdBeginRenderPass(
+                        commandBuffer,
+                        renderPassInfo,
+                        VK_SUBPASS_CONTENTS_INLINE
+                    ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
-                vkCmdEndRenderPass(it)
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
 
-                vkEndCommandBuffer(it).checkVKErrors()
+                    val pSets = mallocLong(1)
+                    pSets.put(0, descriptorSets[index])
+                    VK10.vkCmdBindDescriptorSets(
+                        commandBuffer,
+                        VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        pipelineLayout,
+                        0,
+                        pSets,
+                        null
+                    )
+
+                    scene?.let { it.recordCommandBuffer(commandBuffer) }
+
+                    vkCmdEndRenderPass(commandBuffer)
+
+                    vkEndCommandBuffer(commandBuffer).checkVKErrors()
+                }
             }
         }
     }
@@ -1380,6 +1410,7 @@ object VulkanRenderingEngine: IRenderEngine {
             glfwPollEvents()
             drawFrame()
             // TODO
+            TimeUnit.MILLISECONDS.sleep(10)
             glfwSwapBuffers(windowPointer)
         }
 
@@ -1387,6 +1418,13 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun drawFrame() {
+        synchronized(frameActions) {
+            frameActions.forEach {
+                it()
+            }
+            frameActions.clear()
+        }
+        // TODO: allow changes between frames
         useStack {
             val fences = longs(inFlightFences[currentFrame])
             vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
@@ -1411,23 +1449,28 @@ object VulkanRenderingEngine: IRenderEngine {
     private val ubo = UniformBufferObject()
 
     private fun updateUniformBuffer(frameIndex: Int) {
+        if(scene != null) {
+            scene!!.updateUniformBuffer(ubo)
+        } else {
+            ubo.model.identity()
+        }
         var forward = 0f
         var strafe = 0f
-        if(glfwGetKey(windowPointer, GLFW_KEY_W) == GLFW_PRESS) {
+        if (glfwGetKey(windowPointer, GLFW_KEY_W) == GLFW_PRESS) {
             forward -= 1f
         }
-        if(glfwGetKey(windowPointer, GLFW_KEY_S) == GLFW_PRESS) {
+        if (glfwGetKey(windowPointer, GLFW_KEY_S) == GLFW_PRESS) {
             forward += 1f
         }
-        if(glfwGetKey(windowPointer, GLFW_KEY_A) == GLFW_PRESS) {
+        if (glfwGetKey(windowPointer, GLFW_KEY_A) == GLFW_PRESS) {
             strafe += 1f
         }
-        if(glfwGetKey(windowPointer, GLFW_KEY_D) == GLFW_PRESS) {
+        if (glfwGetKey(windowPointer, GLFW_KEY_D) == GLFW_PRESS) {
             strafe -= 1f
         }
 
         val direction by lazy { Vector3f() }
-        if(strafe != 0f || forward != 0f) {
+        if (strafe != 0f || forward != 0f) {
             direction.set(strafe, forward, 0f)
             direction/*.normalize()*/.rotateAxis(-camera.yaw, 0f, 0f, 1f)
             val speed = 0.001f
@@ -1435,8 +1478,6 @@ object VulkanRenderingEngine: IRenderEngine {
             camera.position.add(direction)
         }
         camera.updateUBO(ubo)
-
-        ubo.model.identity()
 
         useStack {
             val bufferSize = UniformBufferObject.SizeOf
@@ -1532,12 +1573,8 @@ object VulkanRenderingEngine: IRenderEngine {
         swapchainFramebuffers.forEach {
             vkDestroyFramebuffer(logicalDevice, it, null)
         }
-        useStack {
-            val pCommandBuffers = mallocPointer(commandBuffers.size)
-            commandBuffers.forEach { pCommandBuffers.put(it) }
-            pCommandBuffers.flip()
-            vkFreeCommandBuffers(logicalDevice, commandPool, pCommandBuffers)
-        }
+
+        destroyCommandBuffers()
 
         vkDestroyPipeline(logicalDevice, graphicsPipeline, null)
         vkDestroyPipelineLayout(logicalDevice, pipelineLayout, null)
@@ -1547,6 +1584,15 @@ object VulkanRenderingEngine: IRenderEngine {
             vkDestroyImageView(logicalDevice, view, null)
         }
         vkDestroySwapchainKHR(logicalDevice, swapchain, null)
+    }
+
+    private fun destroyCommandBuffers() {
+        useStack {
+            val pCommandBuffers = mallocPointer(commandBuffers.size)
+            commandBuffers.forEach { pCommandBuffers.put(it) }
+            pCommandBuffers.flip()
+            vkFreeCommandBuffers(logicalDevice, commandPool, pCommandBuffers)
+        }
     }
 
     private fun findMemoryType(typeFilter: Int, properties: VkMemoryPropertyFlags): Int {
@@ -1590,4 +1636,38 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun <T> useStack(action: MemoryStack.() -> T) = memoryStack.push().use(action)
+
+    fun setScene(scene: Scene?) {
+        this.scene = scene
+    }
+
+    fun nextFrame(action: () -> Unit) {
+        synchronized(frameActions) {
+            frameActions += action
+        }
+    }
+
+    private fun onRenderThread() = Thread.currentThread() == renderThread
+
+    fun <T: Any> load(function: () -> T): AsyncGraphicalAsset<T> {
+        return if(onRenderThread()) {
+            AsyncGraphicalAsset(function())
+        } else {
+            val result = AsyncGraphicalAsset(function)
+            nextFrame {
+                result.load()
+                println("loaded")
+            }
+            result
+        }
+    }
+
+    fun changeThread() {
+        renderThread = Thread.currentThread()
+        glfwMakeContextCurrent(windowPointer)
+    }
+
+    fun waitForInit() {
+        initSemaphore.acquire()
+    }
 }

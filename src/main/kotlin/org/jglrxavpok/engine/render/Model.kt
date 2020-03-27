@@ -27,7 +27,7 @@ class Model(val path: String, autoload: Boolean = true) {
         dataBuffer.put(data)
         dataBuffer.position(0)
         // TODO: generalize hints
-        val scene = Assimp.aiImportFileFromMemory(dataBuffer,Assimp.aiProcess_Triangulate or Assimp.aiProcess_FlipUVs, "obj")
+        val scene = Assimp.aiImportFileFromMemory(dataBuffer,Assimp.aiProcess_Triangulate or Assimp.aiProcess_FlipUVs, path.substringAfterLast('.'))
         if(scene == null || scene.mFlags() and Assimp.AI_SCENE_FLAGS_INCOMPLETE != 0 || scene.mRootNode() == null) {
             System.err.println("ERROR::ASSIMP: "+Assimp.aiGetErrorString()!!.substringBefore("\n"))
             error("Failed to load file with Assimp")
@@ -93,6 +93,7 @@ class Model(val path: String, autoload: Boolean = true) {
     }
 
     fun record(commandBuffer: VkCommandBuffer) {
+        // TODO: Textures
         meshes.forEach {
             it.record(commandBuffer)
         }

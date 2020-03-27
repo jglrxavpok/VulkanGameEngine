@@ -1,0 +1,13 @@
+package org.jglrxavpok.engine
+
+abstract class Game {
+    /**
+     * Called each time the engine wants to update the game (basically every frame)
+     */
+    abstract fun tick(dt: Float)
+
+    /**
+     *
+     */
+    abstract fun init()
+}
