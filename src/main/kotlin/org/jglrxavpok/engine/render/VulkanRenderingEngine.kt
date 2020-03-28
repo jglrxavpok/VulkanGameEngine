@@ -3,6 +3,7 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.render.model.Model
 import org.joml.Vector3f
 import org.lwjgl.PointerBuffer
 import org.lwjgl.glfw.GLFW.*
@@ -46,7 +47,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private var framebufferResized = false
     private val maxFramesInFlight = 3
 
-    private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation")
+    private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation", "VK_LAYER_LUNARG_monitor")
     private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
     internal val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
@@ -100,7 +101,8 @@ object VulkanRenderingEngine: IRenderEngine {
     private var renderThread: Thread? = null
     private val initSemaphore = Semaphore(1).apply { acquire() }
 
-    private val activeTextures = ArrayList<Texture>()
+    private val activeTextures = mutableMapOf<String, Texture>()
+    private val activeModels = mutableMapOf<String, Model>()
     lateinit var WhiteTexture: Texture
 
     /**
@@ -231,7 +233,6 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val ptr = stack.mallocLong(1)
             EXTDebugUtils.vkCreateDebugUtilsMessengerEXT(vulkan, createInfo, Allocator, ptr).checkVKErrors()
-            println("debug setup")
             debugger = !ptr
         }
     }
@@ -661,6 +662,9 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
+    /**
+     * Allocates and upload a given descriptor set to Vulkan.
+     */
     // TODO: move somewhere else, will depend on shaders
     fun createDescriptorSetFromBuilder(layout: VkDescriptorSetLayout, builder: DescriptorSetBuilder): DescriptorSet {
         val actions = builder.bindings
@@ -1170,6 +1174,10 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
+    /**
+     * Tells Vulkan to start using the given descriptor sets from now on.
+     * Set order is important
+     */
     fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, vararg sets: DescriptorSet) {
         useStack {
             val pSets = mallocLong(sets.size)
@@ -1409,8 +1417,6 @@ object VulkanRenderingEngine: IRenderEngine {
         while(!glfwWindowShouldClose(windowPointer)) {
             glfwPollEvents()
             drawFrame()
-            TimeUnit.MILLISECONDS.sleep(10)
-            glfwSwapBuffers(windowPointer)
         }
 
         vkDeviceWaitIdle(logicalDevice)
@@ -1597,9 +1603,16 @@ object VulkanRenderingEngine: IRenderEngine {
         cleanupSwapchain()
 
         vkDestroySampler(logicalDevice, linearSampler, Allocator)
-        for(texture in activeTextures) {
+        for(model in activeModels.values) {
+            model.free(logicalDevice)
+        }
+        activeModels.clear()
+
+        for(texture in activeTextures.values) {
             texture.free(logicalDevice)
         }
+        activeTextures.clear()
+
 
         for(i in 0 until maxFramesInFlight) {
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], Allocator)
@@ -1619,18 +1632,31 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun <T> useStack(action: MemoryStack.() -> T) = memoryStack.push().use(action)
 
+    /**
+     * Tells the engine which scene to render
+     */
     fun setScene(scene: Scene?) {
         this.scene = scene
     }
 
+    /**
+     * Perform the given action at the beginning of the next frame.
+     * Synchronisation mechanism
+     */
     fun nextFrame(action: () -> Unit) {
         synchronized(frameActions) {
             frameActions += action
         }
     }
 
-    private fun onRenderThread() = Thread.currentThread() == renderThread
+    /**
+     * Is the calling thread the rendering thread?
+     */
+    fun onRenderThread() = Thread.currentThread() == renderThread
 
+    /**
+     * Intended to be used with the 'by' operator of Kotlin to defer asset loading to the render thread
+     */
     fun <T: Any> load(function: () -> T): AsyncGraphicalAsset<T> {
         return if(onRenderThread()) {
             AsyncGraphicalAsset(function())
@@ -1653,9 +1679,13 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     /**
-     * Load a texture into Vulkan
+     * Load a texture into Vulkan.
+     * Caching is applied
      */
     fun createTexture(path: String): Texture {
+        if(path in activeTextures) {
+            return activeTextures[path]!!
+        }
         return useStack {
             val pImage = mallocLong(1)
             val pImageMemory = mallocLong(1)
@@ -1663,9 +1693,22 @@ object VulkanRenderingEngine: IRenderEngine {
             val imageView = createImageView(!pImage, VK_FORMAT_R8G8B8A8_SRGB)
             // TODO: custom sampler
             val texture = Texture(!pImage, imageView, linearSampler)
-            activeTextures += texture
+            activeTextures[path] = texture
 
             texture
         }
+    }
+
+    /**
+     * Loads a model from the given path.
+     * Caching is applied, will return a copy of the original if a cache hit occured
+     */
+    fun createModel(path: String): Model {
+        if(path in activeModels) {
+            return Model(activeModels[path]!!) // return a copy
+        }
+        val model = Model(path)
+        activeModels[path] = model
+        return model
     }
 }

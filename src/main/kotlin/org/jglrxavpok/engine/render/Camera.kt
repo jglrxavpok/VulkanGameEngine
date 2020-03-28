@@ -3,6 +3,9 @@ package org.jglrxavpok.engine.render
 import org.joml.Matrix4f
 import org.joml.Vector3f
 
+/**
+ * Camera used to render
+ */
 class Camera(swapchainWidth: Int, swapchainHeight: Int) {
 
     companion object {

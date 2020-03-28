@@ -11,6 +11,9 @@ import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Vector3fc
 import java.util.concurrent.Semaphore
 
+/**
+ * Entry point to the physics engine
+ */
 object PhysicsEngine {
 
     private lateinit var world: DiscreteDynamicsWorld
@@ -38,18 +41,28 @@ object PhysicsEngine {
         lastStepTime = GameEngine.time
     }
 
+    /**
+     * Sets the gravity of the world.
+     * The given vector is copied
+     */
     fun setGravity(gravity: Vector3fc) {
         synchronized(world) {
             world.setGravity(javax.vecmath.Vector3f(gravity.x(), gravity.y(), gravity.z()))
         }
     }
 
+    /**
+     * Adds a new rigid body to the simulation
+     */
     fun addRigidBody(body: RigidBody) {
         synchronized(world) {
             world.addRigidBody(body)
         }
     }
 
+    /**
+     * Waits for the physics engine to be ready
+     */
     fun waitForInit() {
         initSemaphore.acquire()
     }

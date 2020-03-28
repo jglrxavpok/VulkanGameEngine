@@ -6,10 +6,12 @@ import org.lwjgl.assimp.AIFileIO
 import org.lwjgl.assimp.Assimp
 import org.lwjgl.system.MemoryUtil
 
+/**
+ * FileSystem to use to load Assimp assets from classpath
+ */
 val AssimpFileSystem = AIFileIO.malloc()
     .OpenProc { pFileIO, fileName, openMode ->
         val path = MemoryUtil.memUTF8(fileName)
-        println("Opening $path")
         val connection = Model::class.java.getResource(path).openConnection()
         val inputStream = connection.getInputStream().buffered()
         AIFile.malloc()

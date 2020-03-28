@@ -10,6 +10,7 @@ import org.jglrxavpok.engine.render.Vertex.Companion.put
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.sizeof
 import org.lwjgl.system.MemoryUtil
+import org.lwjgl.vulkan.VkDevice
 
 /**
  * Simple mesh. Contains vertices, indices and may possess a Material
@@ -24,6 +25,9 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
             load()
     }
 
+    /**
+     * Load the mesh: allocates buffers, fill them
+     */
     fun load() {
         val vertexBufferSize = (vertices.size * Vertex.SizeOf).toLong()
         val vertexBuffer = MemoryUtil.memAlloc(vertexBufferSize.toInt())
@@ -53,6 +57,11 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
         MemoryUtil.memFree(vertexBuffer)
     }
 
+    /**
+     * Render this mesh to the given command buffer.
+     * Takes care of using the correct texture by binding the correct descriptor set
+     * @param ubo allow to modify the UBO when rendering this mesh
+     */
     fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubo: UniformBufferObject) {
         MemoryStack.stackPush().use {
             material.prepareDescriptors(commandBuffer, commandBufferIndex, ubo.descriptorSet)
@@ -69,5 +78,13 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
 
             vkCmdDrawIndexed(commandBuffer, indices.size, 1, 0, 0, 0);
         }
+    }
+
+    /**
+     * Releases the vertex and index buffers
+     */
+    fun free(logicalDevice: VkDevice) {
+        vkDestroyBuffer(logicalDevice, vertexBuffer, VulkanRenderingEngine.Allocator)
+        vkDestroyBuffer(logicalDevice, indexBuffer, VulkanRenderingEngine.Allocator)
     }
 }

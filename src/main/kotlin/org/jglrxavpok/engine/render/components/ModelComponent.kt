@@ -7,10 +7,13 @@ import org.jglrxavpok.engine.scene.Element
 import org.jglrxavpok.engine.scene.RenderingComponent
 import org.lwjgl.vulkan.VkCommandBuffer
 
+/**
+ * Entity rendering component.
+ * Used to render a given model at the location of the entity
+ */
 class ModelComponent(val path: String): RenderingComponent {
 
-    // TODO
-    val model: Model by VulkanRenderingEngine.load { Model(path) }
+    val model: Model by VulkanRenderingEngine.load { VulkanRenderingEngine.createModel(path) }
 
     override fun record(element: Element, commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         model.record(commandBuffer, commandBufferIndex)

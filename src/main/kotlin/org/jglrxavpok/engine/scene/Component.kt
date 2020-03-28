@@ -13,7 +13,7 @@ interface Component {
 /**
  * Component that will render to framebuffer
  */
-interface RenderingComponent {
+interface RenderingComponent: Component {
     /**
      * Prepares the rendering of this component to the given buffer
      */
@@ -22,19 +22,15 @@ interface RenderingComponent {
     /**
      * Updates information about the render matrices
      */
-    fun preFrameRender(
-        element: Element,
-        frameIndex: Int,
-        camera: Camera
-    )
-    // TODO
+    fun preFrameRender(element: Element, frameIndex: Int, camera: Camera)
 }
 
 /**
  * Component used to handle logic
  */
-interface LogicComponent {
-    // TODO
-
+interface LogicComponent: Component {
+    /**
+     * React to a game tick
+     */
     fun tick(element: Element, dt: Float)
 }

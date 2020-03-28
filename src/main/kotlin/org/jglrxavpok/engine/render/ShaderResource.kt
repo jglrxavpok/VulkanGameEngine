@@ -10,6 +10,9 @@ import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo
 import org.lwjgl.vulkan.VkDevice
 import java.nio.ByteBuffer
 
+/**
+ * Represents a resource that can be written to and read from a byte buffer
+ */
 abstract class ShaderResource() {
 
     /**

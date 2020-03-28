@@ -9,7 +9,8 @@ import java.nio.Buffer
 /**
  * Returns the size in bytes of a given type.
  *
- * Not the JVM size, but the size used by the graphics card
+ * Not the JVM size, but the size used by the graphics card.
+ * Probably incomplete, only used when communicating with the GPU
  */
 inline fun <reified T> sizeof() =
     when(T::class) {

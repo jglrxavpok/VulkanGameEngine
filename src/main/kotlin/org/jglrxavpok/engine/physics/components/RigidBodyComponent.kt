@@ -6,6 +6,9 @@ import org.jglrxavpok.engine.scene.Element
 import org.jglrxavpok.engine.scene.LogicComponent
 import org.joml.Matrix3f
 
+/**
+ * Entity component that makes the entity controlled by the given rigid body
+ */
 class RigidBodyComponent(val body: RigidBody): LogicComponent {
 
     private val transform: Transform = Transform()
@@ -18,6 +21,8 @@ class RigidBodyComponent(val body: RigidBody): LogicComponent {
         val rotation = transform.basis
 
         element.position.set(origin.x, origin.y, origin.z)
+
+        // convert JBullet rotation to rotation matrix, transposing it at the same time
         convertedMatrix.m00 = rotation.m00
         convertedMatrix.m10 = rotation.m01
         convertedMatrix.m20 = rotation.m02

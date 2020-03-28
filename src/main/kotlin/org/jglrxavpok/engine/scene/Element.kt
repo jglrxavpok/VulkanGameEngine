@@ -5,6 +5,10 @@ import org.joml.Quaternionf
 import org.joml.Vector3f
 import org.lwjgl.vulkan.VkCommandBuffer
 
+/**
+ * Element of the Scene. Possesses components to update the element and to render it.
+ * Holds a position and a rotation which can be accessed in components.
+ */
 open class Element {
 
     val position = Vector3f()

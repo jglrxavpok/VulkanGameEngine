@@ -8,6 +8,9 @@ import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkDevice
 import java.nio.ByteBuffer
 
+/**
+ * Uniform Buffer Objects are used to pass variables to shaders without changing the rendering pipeline
+ */
 class UniformBufferObject: ShaderResource(), Descriptor {
 
     companion object {
@@ -49,6 +52,9 @@ class UniformBufferObject: ShaderResource(), Descriptor {
         return this
     }
 
+    /**
+     * Writes this UBO to the correct memory, depending on the frame in flight index
+     */
     fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
         if(buffers.size < frameIndex || memories.size < frameIndex) { // don't try to update memory we don't have yet
             return
@@ -72,6 +78,9 @@ class UniformBufferObject: ShaderResource(), Descriptor {
         )
     }
 
+    /**
+     * Releases buffers and memory used by this object
+     */
     fun free() {
         buffers.forEach {
             VK10.vkDestroyBuffer(VulkanRenderingEngine.logicalDevice, it, VulkanRenderingEngine.Allocator)

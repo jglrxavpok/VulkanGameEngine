@@ -11,6 +11,10 @@ import org.lwjgl.vulkan.VkVertexInputAttributeDescription
 import org.lwjgl.vulkan.VkVertexInputBindingDescription
 import java.nio.FloatBuffer
 
+/**
+ * Represents a vertex for the rendering engine
+ */
+// TODO: Normals for lighting, other components?
 data class Vertex(val pos: Vector3fc = Vector3f(),
                   val color: Vector3fc = Vector3f(),
                   val texCoords: Vector2f = Vector2f()) {

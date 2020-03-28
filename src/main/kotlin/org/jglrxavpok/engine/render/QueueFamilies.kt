@@ -1,5 +1,8 @@
 package org.jglrxavpok.engine.render
 
+/**
+ * Queues used by the rendering engine
+ */
 class QueueFamilies: Iterable<Int?> {
     var graphics: Int? = null
 

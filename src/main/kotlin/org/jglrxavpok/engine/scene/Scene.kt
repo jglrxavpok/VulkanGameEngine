@@ -5,6 +5,9 @@ import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.util.*
 
+/**
+ * A scene is a collection of Element, it is responsible of dispatching ticks and rendering the elements
+ */
 class Scene {
 
     /**

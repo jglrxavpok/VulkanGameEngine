@@ -7,7 +7,7 @@ abstract class Game {
     abstract fun tick(dt: Float)
 
     /**
-     *
+     * Sets up the game
      */
     abstract fun init()
 }

@@ -15,10 +15,12 @@ object GameEngine {
     private lateinit var game: Game
     val time get()= glfwGetTime()
 
+    /**
+     * Starts up the game engine
+     */
     fun launch(info: GameInformation, game: Game) {
         this.game = game
 
-        // TODO: fixed fps
         openNursery {
             start {
                 VulkanRenderingEngine.init(info, true)

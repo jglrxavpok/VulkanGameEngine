@@ -9,14 +9,38 @@ import org.joml.Vector3f
 import org.lwjgl.assimp.*
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VkCommandBuffer
+import org.lwjgl.vulkan.VkDevice
 
-class Model(val path: String, autoload: Boolean = true) {
+/**
+ * Represents a model inside the rendering engine
+ * A model is composed of meshes and materials, and of a UBO that allows transformations
+ */
+class Model {
 
+    val path: String
     private val meshes = mutableListOf<Mesh>()
     private val materials = mutableListOf<Material>()
     val ubo = UniformBufferObject()
 
-    init {
+    /**
+     * Create a copy of the given model
+     * This is NOT a deep copy
+     */
+    constructor(toCopy: Model) {
+        path = toCopy.path
+        meshes.addAll(toCopy.meshes)
+        materials.addAll(toCopy.materials)
+        ubo.model.set(toCopy.ubo.model)
+        ubo.proj.set(toCopy.ubo.proj)
+        ubo.view.set(toCopy.ubo.view)
+    }
+
+    /**
+     * Load the model from the given path.
+     * @see load
+     */
+    constructor(path: String, autoload: Boolean = true) {
+        this.path = path
         if(autoload) {
             load()
         }
@@ -24,14 +48,14 @@ class Model(val path: String, autoload: Boolean = true) {
 
 
     /**
-     * Load the model from its path, extract meshes and materials
+     * Load the model from its path (in classpath), extract meshes and materials.
+     * If the model requires an external file, it will be searched in the classpath
      */
     fun load() {
         val data = javaClass.getResource(path).readBytes()
         val dataBuffer = MemoryUtil.memAlloc(data.size)
         dataBuffer.put(data)
         dataBuffer.position(0)
-        // TODO: generalize hints
         val scene = Assimp.aiImportFileEx(path,Assimp.aiProcess_Triangulate or Assimp.aiProcess_FlipUVs, AssimpFileSystem)
         if(scene == null || scene.mFlags() and Assimp.AI_SCENE_FLAGS_INCOMPLETE != 0 || scene.mRootNode() == null) {
             System.err.println("ERROR::ASSIMP: "+Assimp.aiGetErrorString()!!.substringBefore("\n"))
@@ -56,11 +80,9 @@ class Model(val path: String, autoload: Boolean = true) {
             if(count > 0) { // TODO: support for multiple textures
                 val path = AIString.malloc()
 
-                println("count > 0")
                 // add only if texture is present
                 if(Assimp.aiGetMaterialTexture(material, Assimp.aiTextureType_DIFFUSE, 0, path, null as? IntArray, null, null, null, null, null) == 0) {
                     val pathString = "/${path.dataString()}"
-                    println("load texture $pathString")
                     builder.diffuseTexture(TextureDescriptor(pathString, TextureUsage.Diffuse))
                 }
                 path.free()
@@ -151,6 +173,16 @@ class Model(val path: String, autoload: Boolean = true) {
     fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         meshes.forEach {
             it.record(commandBuffer, commandBufferIndex, ubo)
+        }
+    }
+
+    /**
+     * Releases the UBO resources and each mesh
+     */
+    fun free(logicalDevice: VkDevice) {
+        ubo.free()
+        meshes.forEach {
+            it.free(logicalDevice)
         }
     }
 }
