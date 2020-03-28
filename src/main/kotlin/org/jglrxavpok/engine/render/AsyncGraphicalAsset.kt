@@ -10,12 +10,15 @@ class AsyncGraphicalAsset<T: Any> {
 
     private val loaded get()= this::value.isInitialized
     private var initializer: () -> T
+    private val replacement: () -> T
 
     /**
-     * Asset that will be initialized later on the rendering thread
+     * Asset that will be initialized later on the rendering thread.
+     * Replacement is the asset to use will this one is loading, must already be loaded
      */
-    constructor(initializer: () -> T) {
+    constructor(replacement: () -> T, initializer: () -> T) {
         this.initializer = initializer
+        this.replacement = replacement
     }
 
     /**
@@ -24,6 +27,7 @@ class AsyncGraphicalAsset<T: Any> {
     constructor(preinitializedValue: T) {
         this.initializer = { preinitializedValue }
         this.value = preinitializedValue
+        this.replacement = initializer
     }
 
     /**
@@ -37,8 +41,8 @@ class AsyncGraphicalAsset<T: Any> {
      * Used by the 'by' operator of Kotlin, will sleep as long as the value is not loaded
      */
     operator fun getValue(owner: Any, property: KProperty<*>): T {
-        while(!loaded) {
-            Thread.sleep(1)
+        if(!loaded) {
+            return replacement()
         }
         return value
     }

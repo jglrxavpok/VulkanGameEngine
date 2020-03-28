@@ -28,14 +28,13 @@ import org.lwjgl.stb.STBImage
 import java.nio.LongBuffer
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
-import kotlin.collections.ArrayList
 
 /**
  * Vulkan implementation of the render engine
  */
 object VulkanRenderingEngine: IRenderEngine {
 
+    val MaxTextures = 4096
     val EngineName = "jglrEngine"
     val Version = Version(0, 0, 1, "indev")
     val RenderWidth: Int = 1920
@@ -91,7 +90,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private var currentFrame = 0
 
     // End of Vulkan objects
-    private lateinit var camera: Camera
+    lateinit var camera: Camera
 
     private var previousPosX = 0.0
     private var previousPosY = 0.0
@@ -105,10 +104,12 @@ object VulkanRenderingEngine: IRenderEngine {
     private val activeModels = mutableMapOf<String, Model>()
     lateinit var WhiteTexture: Texture
 
+    lateinit var emptyDescriptor: DescriptorSet
+
     /**
      * Initializes the render engine
      */
-    fun init(gameInfo: GameInformation, enableValidationLayers: Boolean = true) {
+    fun init(gameInfo: GameInformation, game: Game, enableValidationLayers: Boolean = true) {
         renderThread = Thread.currentThread()
         Configuration.DEBUG.set(true)
         Configuration.DISABLE_CHECKS.set(false)
@@ -128,14 +129,16 @@ object VulkanRenderingEngine: IRenderEngine {
             val dx = xpos - previousPosX
             val dy = ypos - previousPosY
 
-            camera.yaw += dx.toFloat()*.003f
-            camera.pitch += dy.toFloat()*.003f
+            game.onMouseMoveEvent(xpos, ypos, dx, dy)
 
             previousPosX = xpos
             previousPosY = ypos
         }
         glfwSetKeyCallback(windowPointer) { window, key, scancode, action, mods ->
-
+            game.onKeyEvent(key, scancode, action, mods)
+        }
+        glfwSetMouseButtonCallback(windowPointer) { window, button, action, mods ->
+            game.onMouseButton(button, action)
         }
         glfwSetInputMode(windowPointer, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
 
@@ -168,6 +171,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createCommandBuffers()
         createSyncingMechanisms()
 
+        emptyDescriptor = createDescriptorSetFromBuilder(descriptorLayoutUBO, DescriptorSetBuilder())
         initSemaphore.release()
     }
 
@@ -702,18 +706,20 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createDescriptorPool(maxSize: Int = 100): VkDescriptorPool {
         return useStack {
-            val poolSize = VkDescriptorPoolSize.callocStack(2, this)
+            val poolSize = VkDescriptorPoolSize.callocStack(3, this)
             poolSize.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
             poolSize.get(0).descriptorCount(swapchainImages.size*maxSize) // one per frame
 
-            poolSize.get(1).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-            poolSize.get(1).descriptorCount(swapchainImages.size*maxSize) // one per frame
+            poolSize.get(1).type(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
+            poolSize.get(1).descriptorCount(swapchainImages.size*maxSize*MaxTextures) // one per frame
+
+            poolSize.get(2).type(VK_DESCRIPTOR_TYPE_SAMPLER)
+            poolSize.get(2).descriptorCount(swapchainImages.size*maxSize) // one per frame
 
             val poolInfo = VkDescriptorPoolCreateInfo.callocStack(this)
             poolInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO)
             poolInfo.pPoolSizes(poolSize)
             poolInfo.maxSets(swapchainImages.size*maxSize)
-            poolInfo.flags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)
 
             val pPool = mallocLong(1)
             if(vkCreateDescriptorPool(logicalDevice, poolInfo, Allocator, pPool) != VK_SUCCESS) {
@@ -1422,14 +1428,17 @@ object VulkanRenderingEngine: IRenderEngine {
         vkDeviceWaitIdle(logicalDevice)
     }
 
-    private fun drawFrame() {
+    private fun performActions() {
         synchronized(frameActions) {
             frameActions.forEach {
                 it()
             }
             frameActions.clear()
         }
-        // TODO: allow changes between frames
+    }
+
+    private fun drawFrame() {
+        performActions()
         useStack {
             val fences = longs(inFlightFences[currentFrame])
             vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
@@ -1574,10 +1583,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun destroyCommandBuffers() {
         useStack {
-            val pCommandBuffers = mallocPointer(commandBuffers.size)
-            commandBuffers.forEach { pCommandBuffers.put(it) }
-            pCommandBuffers.flip()
-            vkFreeCommandBuffers(logicalDevice, commandPool, pCommandBuffers)
+            vkResetCommandPool(logicalDevice, commandPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT)
         }
     }
 
@@ -1657,11 +1663,11 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Intended to be used with the 'by' operator of Kotlin to defer asset loading to the render thread
      */
-    fun <T: Any> load(function: () -> T): AsyncGraphicalAsset<T> {
+    fun <T: Any> load(replacement: () -> T, function: () -> T): AsyncGraphicalAsset<T> {
         return if(onRenderThread()) {
             AsyncGraphicalAsset(function())
         } else {
-            val result = AsyncGraphicalAsset(function)
+            val result = AsyncGraphicalAsset(replacement, function)
             nextFrame {
                 result.load()
             }

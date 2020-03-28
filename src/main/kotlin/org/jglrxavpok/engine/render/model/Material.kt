@@ -14,7 +14,7 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
     /**
      * Used by the rendering engine to know what texture to use
      */
-    override val descriptorSet by VulkanRenderingEngine.load {
+    override val descriptorSet by VulkanRenderingEngine.load(DescriptorSet.Companion::Empty) {
         val builder = DescriptorSetBuilder()
         if(diffuseTexture != null) {
             builder.textureSampling(diffuseTexture.texture)
@@ -57,7 +57,7 @@ class MaterialBuilder {
  * Represents a texture inside a material
  */
 data class TextureDescriptor(val path: String, val usage: TextureUsage) {
-    val texture by VulkanRenderingEngine.load { VulkanRenderingEngine.createTexture(path) }
+    val texture by VulkanRenderingEngine.load({ VulkanRenderingEngine.WhiteTexture }) { VulkanRenderingEngine.createTexture(path) }
 }
 
 /**

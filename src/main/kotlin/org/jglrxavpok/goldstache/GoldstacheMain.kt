@@ -1,5 +1,6 @@
 package org.jglrxavpok.goldstache
 
+import org.jglrxavpok.engine.Game
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.openNursery
@@ -30,7 +31,12 @@ val GoldstacheInfo = GameInformation("Goldstache RPG", Version(1, 0, 0))
 private fun start() {
     openNursery {
         start {
-            VulkanRenderingEngine.init(GoldstacheInfo, enableValidationLayers = true)
+            VulkanRenderingEngine.init(GoldstacheInfo, object: Game() {
+                override fun tick(dt: Float) { }
+
+                override fun init() { }
+            },
+            enableValidationLayers = true)
             VulkanRenderingEngine.loop()
             VulkanRenderingEngine.cleanup()
         }

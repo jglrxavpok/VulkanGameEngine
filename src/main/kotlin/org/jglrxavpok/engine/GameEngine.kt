@@ -22,16 +22,18 @@ object GameEngine {
         this.game = game
 
         openNursery {
+            var stop = false
             start {
-                VulkanRenderingEngine.init(info, true)
+                VulkanRenderingEngine.init(info, game, true)
                 VulkanRenderingEngine.changeThread()
                 VulkanRenderingEngine.loop()
                 VulkanRenderingEngine.cleanup()
+                stop = true
             }
 
             start {
                 PhysicsEngine.init()
-                while(true) {
+                while(!stop) {
                     PhysicsEngine.tick()
                     TimeUnit.MILLISECONDS.sleep(10)
                 }
@@ -42,7 +44,7 @@ object GameEngine {
                 game.init()
 
                 var lastStepTime = GameEngine.time
-                while(true) {
+                while(!stop) {
                     val dt = GameEngine.time - lastStepTime
                     game.tick(dt.toFloat())
                     lastStepTime = GameEngine.time

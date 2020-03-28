@@ -17,6 +17,10 @@ import org.lwjgl.vulkan.VkDevice
  */
 class Model {
 
+    companion object {
+        val Empty = Model("invalid path", autoload = false)
+    }
+
     val path: String
     private val meshes = mutableListOf<Mesh>()
     private val materials = mutableListOf<Material>()
@@ -91,7 +95,7 @@ class Model {
             this.materials += builder.build()
         }
 
-        VulkanRenderingEngine.load {
+        VulkanRenderingEngine.load({ Material.None }) {
             materials.forEach {
                 it.diffuseTexture?.let { descriptor ->
                     VulkanRenderingEngine.createTexture(descriptor.path)

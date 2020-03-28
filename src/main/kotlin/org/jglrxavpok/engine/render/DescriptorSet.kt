@@ -13,6 +13,11 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet
  * 'sets' is the sets used by Vulkan, one per frame in flight
  */
 class DescriptorSet(val sets: Array<VkDescriptorSet>) {
+
+    companion object {
+        fun Empty() = VulkanRenderingEngine.emptyDescriptor
+    }
+
     operator fun get(index: Int): VkDescriptorSet {
         return sets[index]
     }

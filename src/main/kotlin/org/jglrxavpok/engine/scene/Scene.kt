@@ -10,6 +10,8 @@ import java.util.*
  */
 class Scene {
 
+    private var futureActions = mutableListOf<() -> Unit>()
+
     /**
      * Used to determine if the graphics engine needs to rebuild command buffers, textures, etc.
      */
@@ -34,6 +36,12 @@ class Scene {
 
     fun tickAll(dt: Float) {
         synchronized(elements) {
+            synchronized(futureActions) {
+                futureActions.forEach {
+                    it()
+                }
+                futureActions.clear()
+            }
             if(isRenderingDirty) {
                 refreshRendering()
                 isRenderingDirty = false
@@ -55,6 +63,12 @@ class Scene {
 
     fun refreshRendering() {
         VulkanRenderingEngine.requestCommandBufferRecreation()
+    }
+
+    fun nextTick(function: () -> Unit) {
+        synchronized(futureActions) {
+            futureActions.add(function)
+        }
     }
 
 }

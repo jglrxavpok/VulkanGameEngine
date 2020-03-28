@@ -13,7 +13,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  */
 class ModelComponent(val path: String): RenderingComponent {
 
-    val model: Model by VulkanRenderingEngine.load { VulkanRenderingEngine.createModel(path) }
+    val model: Model by VulkanRenderingEngine.load({ Model.Empty }) { VulkanRenderingEngine.createModel(path) }
 
     override fun record(element: Element, commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         model.record(commandBuffer, commandBufferIndex)

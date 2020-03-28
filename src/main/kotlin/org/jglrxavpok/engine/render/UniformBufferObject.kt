@@ -24,7 +24,7 @@ class UniformBufferObject: ShaderResource(), Descriptor {
     internal val buffers = mutableListOf<VkBuffer>()
     private val memories = mutableListOf<VkDeviceMemory>()
 
-    override val descriptorSet by VulkanRenderingEngine.load {
+    override val descriptorSet by VulkanRenderingEngine.load(DescriptorSet.Companion::Empty) {
         val preparation = VulkanRenderingEngine.prepareUniformBuffer()
         buffers.addAll(preparation.first)
         memories.addAll(preparation.second)
