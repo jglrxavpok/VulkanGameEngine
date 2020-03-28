@@ -1,6 +1,6 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.UniformBufferObject
+import org.jglrxavpok.engine.render.Camera
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -17,12 +17,16 @@ interface RenderingComponent {
     /**
      * Prepares the rendering of this component to the given buffer
      */
-    fun record(element: Element, commandBuffer: VkCommandBuffer)
+    fun record(element: Element, commandBuffer: VkCommandBuffer, commandBufferIndex: Int)
 
     /**
      * Updates information about the render matrices
      */
-    fun updateUniformBufferObject(element: Element, ubo: UniformBufferObject)
+    fun preFrameRender(
+        element: Element,
+        frameIndex: Int,
+        camera: Camera
+    )
     // TODO
 }
 

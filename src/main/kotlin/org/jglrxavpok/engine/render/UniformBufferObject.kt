@@ -1,12 +1,14 @@
 package org.jglrxavpok.engine.render
 
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.*
 import org.joml.Matrix4f
+import org.lwjgl.system.MemoryStack
+import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VK10
+import org.lwjgl.vulkan.VkDevice
 import java.nio.ByteBuffer
 
-class UniformBufferObject: ShaderResource() {
+class UniformBufferObject: ShaderResource(), Descriptor {
 
     companion object {
         val SizeOf = sizeof<Matrix4f>() * 3L
@@ -15,6 +17,17 @@ class UniformBufferObject: ShaderResource() {
     val model = Matrix4f()
     val view = Matrix4f()
     val proj = Matrix4f()
+
+    internal val buffers = mutableListOf<VkBuffer>()
+    private val memories = mutableListOf<VkDeviceMemory>()
+
+    override val descriptorSet by VulkanRenderingEngine.load {
+        val preparation = VulkanRenderingEngine.prepareUniformBuffer()
+        buffers.addAll(preparation.first)
+        memories.addAll(preparation.second)
+
+        VulkanRenderingEngine.createDescriptorSetFromBuilder(VulkanRenderingEngine.descriptorLayoutUBO, DescriptorSetBuilder().ubo(this))
+    }
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
         model.get(buffer)
@@ -34,5 +47,37 @@ class UniformBufferObject: ShaderResource() {
         proj.set(from)
         from.skip(16*4)
         return this
+    }
+
+    fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
+        if(buffers.size < frameIndex || memories.size < frameIndex) { // don't try to update memory we don't have yet
+            return
+        }
+        val bufferSize = SizeOf
+        val ppData = stack.mallocPointer(1)
+        val data = write(stack.malloc(bufferSize.toInt()))
+        VK10.vkMapMemory(
+            logicalDevice,
+            memories[frameIndex],
+            0,
+            bufferSize,
+            0,
+            ppData
+        )
+        data.position(0)
+        MemoryUtil.memCopy(MemoryUtil.memAddress(data), !ppData, bufferSize)
+        VK10.vkUnmapMemory(
+            logicalDevice,
+            memories[frameIndex]
+        )
+    }
+
+    fun free() {
+        buffers.forEach {
+            VK10.vkDestroyBuffer(VulkanRenderingEngine.logicalDevice, it, VulkanRenderingEngine.Allocator)
+        }
+        memories.forEach {
+            VK10.vkFreeMemory(VulkanRenderingEngine.logicalDevice, it, VulkanRenderingEngine.Allocator)
+        }
     }
 }

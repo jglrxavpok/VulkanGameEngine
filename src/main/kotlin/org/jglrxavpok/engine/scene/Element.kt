@@ -1,6 +1,6 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.UniformBufferObject
+import org.jglrxavpok.engine.render.Camera
 import org.joml.Quaternionf
 import org.joml.Vector3f
 import org.lwjgl.vulkan.VkCommandBuffer
@@ -37,16 +37,16 @@ open class Element {
     /**
      * Prepares the rendering of this element to the given command buffer
      */
-    fun recordCommandBuffer(commandBuffer: VkCommandBuffer)= synchronized(renderingComponents) {
+    fun recordCommandBuffer(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) = synchronized(renderingComponents) {
         renderingComponents.forEach {
-            it.record(this, commandBuffer)
+            it.record(this, commandBuffer, commandBufferIndex)
         }
     }
 
     // TODO: one per component?
-    fun updateUniformBufferObject(ubo: UniformBufferObject) = synchronized(renderingComponents) {
+    fun preFrameRender(frameIndex: Int, camera: Camera) = synchronized(renderingComponents) {
         renderingComponents.forEach {
-            it.updateUniformBufferObject(this, ubo)
+            it.preFrameRender(this, frameIndex, camera)
         }
     }
 

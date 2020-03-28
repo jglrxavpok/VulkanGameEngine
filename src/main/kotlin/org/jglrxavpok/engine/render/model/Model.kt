@@ -1,18 +1,20 @@
-package org.jglrxavpok.engine.render
+package org.jglrxavpok.engine.render.model
 
+import org.jglrxavpok.engine.io.AssimpFileSystem
+import org.jglrxavpok.engine.render.UniformBufferObject
+import org.jglrxavpok.engine.render.Vertex
+import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Vector2f
 import org.joml.Vector3f
-import org.lwjgl.assimp.AIMesh
-import org.lwjgl.assimp.AINode
-import org.lwjgl.assimp.AIScene
-import org.lwjgl.assimp.Assimp
+import org.lwjgl.assimp.*
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VkCommandBuffer
-import java.util.*
 
 class Model(val path: String, autoload: Boolean = true) {
 
     private val meshes = mutableListOf<Mesh>()
+    private val materials = mutableListOf<Material>()
+    val ubo = UniformBufferObject()
 
     init {
         if(autoload) {
@@ -21,21 +23,64 @@ class Model(val path: String, autoload: Boolean = true) {
     }
 
 
+    /**
+     * Load the model from its path, extract meshes and materials
+     */
     fun load() {
         val data = javaClass.getResource(path).readBytes()
         val dataBuffer = MemoryUtil.memAlloc(data.size)
         dataBuffer.put(data)
         dataBuffer.position(0)
         // TODO: generalize hints
-        val scene = Assimp.aiImportFileFromMemory(dataBuffer,Assimp.aiProcess_Triangulate or Assimp.aiProcess_FlipUVs, path.substringAfterLast('.'))
+        val scene = Assimp.aiImportFileEx(path,Assimp.aiProcess_Triangulate or Assimp.aiProcess_FlipUVs, AssimpFileSystem)
         if(scene == null || scene.mFlags() and Assimp.AI_SCENE_FLAGS_INCOMPLETE != 0 || scene.mRootNode() == null) {
             System.err.println("ERROR::ASSIMP: "+Assimp.aiGetErrorString()!!.substringBefore("\n"))
             error("Failed to load file with Assimp")
         }
+        processMaterials(scene)
         processNode(scene.mRootNode()!!, scene)
         MemoryUtil.memFree(dataBuffer)
     }
 
+    /**
+     * Load materials present in the Assimp scene
+     */
+    private fun processMaterials(scene: AIScene) {
+        for(i in 0 until scene.mNumMaterials()) {
+            val materials = scene.mMaterials()!!
+            val materialAddress = materials[i]
+            val material = AIMaterial.create(materialAddress)
+
+            val builder = MaterialBuilder()
+            val count = Assimp.aiGetMaterialTextureCount(material, Assimp.aiTextureType_DIFFUSE)
+            if(count > 0) { // TODO: support for multiple textures
+                val path = AIString.malloc()
+
+                println("count > 0")
+                // add only if texture is present
+                if(Assimp.aiGetMaterialTexture(material, Assimp.aiTextureType_DIFFUSE, 0, path, null as? IntArray, null, null, null, null, null) == 0) {
+                    val pathString = "/${path.dataString()}"
+                    println("load texture $pathString")
+                    builder.diffuseTexture(TextureDescriptor(pathString, TextureUsage.Diffuse))
+                }
+                path.free()
+            }
+
+            this.materials += builder.build()
+        }
+
+        VulkanRenderingEngine.load {
+            materials.forEach {
+                it.diffuseTexture?.let { descriptor ->
+                    VulkanRenderingEngine.createTexture(descriptor.path)
+                }
+            }
+        }
+    }
+
+    /**
+     * Load all nodes of the Assimp scenes, and extract meshes
+     */
     private fun processNode(rootNode: AINode, scene: AIScene) {
         for (i in 0 until rootNode.mNumMeshes()) {
             val mesh = AIMesh.create(scene.mMeshes()!!.get(i))
@@ -47,6 +92,9 @@ class Model(val path: String, autoload: Boolean = true) {
         }
     }
 
+    /**
+     * Builds a single Vulkan mesh from a Assimp mes
+     */
     private fun processMesh(mesh: AIMesh, scene: AIScene): Mesh {
         val vertices = mutableListOf<Vertex>()
         val indices = mutableListOf<UInt>()
@@ -71,9 +119,12 @@ class Model(val path: String, autoload: Boolean = true) {
                 Vector2f(0f, 0f)
             }
 
-            // TODO: process materials
             // TODO: process normals
-            val vertex = Vertex(Vector3f(pos.x(), pos.y(), pos.z()), color, texCoords)
+            val vertex = Vertex(
+                Vector3f(pos.x(), pos.y(), pos.z()),
+                color,
+                texCoords
+            )
             vertices += vertex
         }
 
@@ -88,14 +139,18 @@ class Model(val path: String, autoload: Boolean = true) {
             indices.add(face.mIndices()[2].toUInt())
         }
 
+        val materialIndex = mesh.mMaterialIndex()
+        val material = materials[materialIndex]
 
-        return Mesh(vertices, indices)
+        return Mesh(vertices, indices, material = material)
     }
 
-    fun record(commandBuffer: VkCommandBuffer) {
-        // TODO: Textures
+    /**
+     * Renders this model to the given command buffer
+     */
+    fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         meshes.forEach {
-            it.record(commandBuffer)
+            it.record(commandBuffer, commandBufferIndex, ubo)
         }
     }
 }

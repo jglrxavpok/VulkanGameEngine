@@ -19,13 +19,13 @@ class RigidBodyComponent(val body: RigidBody): LogicComponent {
 
         element.position.set(origin.x, origin.y, origin.z)
         convertedMatrix.m00 = rotation.m00
-        convertedMatrix.m01 = rotation.m01
-        convertedMatrix.m02 = rotation.m02
-        convertedMatrix.m10 = rotation.m10
+        convertedMatrix.m10 = rotation.m01
+        convertedMatrix.m20 = rotation.m02
+        convertedMatrix.m01 = rotation.m10
         convertedMatrix.m11 = rotation.m11
-        convertedMatrix.m12 = rotation.m12
-        convertedMatrix.m20 = rotation.m20
-        convertedMatrix.m21 = rotation.m21
+        convertedMatrix.m21 = rotation.m12
+        convertedMatrix.m02 = rotation.m20
+        convertedMatrix.m12 = rotation.m21
         convertedMatrix.m22 = rotation.m22
 
         element.rotation.setFromUnnormalized(convertedMatrix)

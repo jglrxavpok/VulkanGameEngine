@@ -1,6 +1,6 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.UniformBufferObject
+import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.util.*
@@ -21,10 +21,10 @@ class Scene {
         }
     }
 
-    fun recordCommandBuffer(commandBuffer: VkCommandBuffer) {
+    fun recordCommandBuffer(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         synchronized(elements) {
             elements.forEach {
-                it.recordCommandBuffer(commandBuffer)
+                it.recordCommandBuffer(commandBuffer, commandBufferIndex)
             }
         }
     }
@@ -42,12 +42,10 @@ class Scene {
         }
     }
 
-    // TODO: TMP, one per object later
-    fun updateUniformBuffer(ubo: UniformBufferObject) {
-        // TODO
+    fun preRenderFrame(frameIndex: Int, camera: Camera) {
         synchronized(elements) {
             elements.forEach {
-                it.updateUniformBufferObject(ubo)
+                it.preFrameRender(frameIndex, camera)
             }
         }
     }
