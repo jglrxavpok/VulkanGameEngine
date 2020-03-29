@@ -25,6 +25,8 @@ import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
 import org.jglrxavpok.engine.scene.Scene
 import org.lwjgl.stb.STBImage
+import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
+import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
 import java.nio.LongBuffer
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
@@ -34,7 +36,8 @@ import java.util.concurrent.Semaphore
  */
 object VulkanRenderingEngine: IRenderEngine {
 
-    val MaxTextures = 4096
+    val MaxObjects = 100000
+    val MaxTextures = 256
     val EngineName = "jglrEngine"
     val Version = Version(0, 0, 1, "indev")
     val RenderWidth: Int = 1920
@@ -64,15 +67,14 @@ object VulkanRenderingEngine: IRenderEngine {
     private var swapchainFormat: Int = -1
     private var swapchainPresentMode: VkPresentModeKHR = -1
     private var renderPass: VkRenderPass = -1
-    private var pipelineLayout: VkPipelineLayout = -1
+    internal var defaultGraphicsPipelineLayout: VkPipelineLayout = -1
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
     private var descriptorPool: VkDescriptorPool = -1
 
-    var descriptorLayoutTexture: VkDescriptorSetLayout = -1
-    var descriptorLayoutUBO: VkDescriptorSetLayout = -1
+    var defaultDescriptorLayout: VkDescriptorSetLayout = -1
 
-    private var linearSampler: VkSampler = -1
+    internal var linearSampler: VkSampler = -1
 
     private var depthImage: VkImage = -1
     private var depthImageMemory: VkDeviceMemory = -1
@@ -104,7 +106,12 @@ object VulkanRenderingEngine: IRenderEngine {
     private val activeModels = mutableMapOf<String, Model>()
     lateinit var WhiteTexture: Texture
 
+    lateinit var defaultShaderDescriptor: DescriptorSet
     lateinit var emptyDescriptor: DescriptorSet
+    private lateinit var uboMemories:  List<VkDeviceMemory>
+    private val imageViews = mutableMapOf<Int, VkImageView>()
+    private var textureID = 0
+    private var uboID = 0
 
     /**
      * Initializes the render engine
@@ -159,20 +166,30 @@ object VulkanRenderingEngine: IRenderEngine {
         createLogicalDevice()
         createSwapchain()
         createCamera()
-        createImageViews()
+        createRenderImageViews()
         createRenderPass()
         createGraphicsPipeline()
         createCommandPool()
         createDepthResources()
         createFramebuffers()
         linearSampler = createTextureSampler()
-        WhiteTexture = createTexture("/textures/white.png")
         descriptorPool = createDescriptorPool()
         createCommandBuffers()
         createSyncingMechanisms()
 
-        emptyDescriptor = createDescriptorSetFromBuilder(descriptorLayoutUBO, DescriptorSetBuilder())
+        val uboInfo = prepareUniformBuffers()
+        uboMemories = uboInfo.second
+
+        defaultShaderDescriptor = createDescriptorSetFromBuilder(defaultDescriptorLayout,
+            DescriptorSetUpdateBuilder().sampler(linearSampler).ubo(uboInfo.first))
+
+        WhiteTexture = createTexture("/textures/white.png")
+
         initSemaphore.release()
+    }
+
+    fun getUBOMemory(frameIndex: Int): VkDeviceMemory {
+        return uboMemories[frameIndex]
     }
 
     private fun initVulkanInstance(gameInfo: GameInformation, enableValidationLayers: Boolean) {
@@ -182,7 +199,7 @@ object VulkanRenderingEngine: IRenderEngine {
         useStack {
             val appInfo = VkApplicationInfo.callocStack(this)
             appInfo.sType(VK_STRUCTURE_TYPE_APPLICATION_INFO)
-            appInfo.apiVersion(VK_API_VERSION_1_0)
+            appInfo.apiVersion(VK_API_VERSION_1_1)
             appInfo.applicationVersion(VK_MAKE_VERSION(gameInfo.version.major, gameInfo.version.minor, gameInfo.version.patch))
             appInfo.engineVersion(VK_MAKE_VERSION(Version.major, Version.minor, Version.patch))
 
@@ -279,10 +296,16 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val usedFeatures = VkPhysicalDeviceFeatures.callocStack(this)
             usedFeatures.samplerAnisotropy(true)
+
+            val indexingFeatures = VkPhysicalDeviceDescriptorIndexingFeaturesEXT.callocStack(this)
+            indexingFeatures.sType(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT)
+            indexingFeatures.descriptorBindingPartiallyBound(true)
+            indexingFeatures.runtimeDescriptorArray(true)
             // TODO: use features
 
             val createDeviceInfo = VkDeviceCreateInfo.callocStack(this)
             createDeviceInfo.sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO)
+            createDeviceInfo.pNext(indexingFeatures.address())
             createDeviceInfo.pEnabledFeatures(usedFeatures)
             createDeviceInfo.pQueueCreateInfos(createQueueInfoBuffer)
             createDeviceInfo.ppEnabledExtensionNames(createNamesBuffer(deviceExtensions, this))
@@ -355,7 +378,7 @@ object VulkanRenderingEngine: IRenderEngine {
         camera.position.set(0f, 0f, 0f)
     }
 
-    private fun createImageViews() {
+    private fun createRenderImageViews() {
         useStack {
             val imageViews = mutableListOf<VkImageView>()
             for(image in swapchainImages) {
@@ -529,45 +552,45 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val pipelineLayoutInfo = VkPipelineLayoutCreateInfo.callocStack(this)
             pipelineLayoutInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO)
+            val pushConstants = VkPushConstantRange.callocStack(1, this)
+            pushConstants.stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
+            pushConstants.offset(0)
+            pushConstants.size(MaxTextures)
+            pipelineLayoutInfo.pPushConstantRanges(pushConstants)
 
-            // TODO: multiple textures?
-            val textureBinding = VkDescriptorSetLayoutBinding.callocStack(1, this)
-            textureBinding.binding(0)
-            textureBinding.descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-            textureBinding.descriptorCount(1) // TODO: change for multiple textures?
-            textureBinding.stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
+            val bindings = VkDescriptorSetLayoutBinding.callocStack(3, this)
+            bindings.get(0).binding(0)
+            bindings.get(0).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
+            bindings.get(0).descriptorCount(1)
+            bindings.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT)
+
+            bindings.get(1).binding(1)
+            bindings.get(1).descriptorType(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
+            bindings.get(1).descriptorCount(MaxTextures)
+            bindings.get(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
+
+            bindings.get(2).binding(2)
+            bindings.get(2).descriptorType(VK_DESCRIPTOR_TYPE_SAMPLER)
+            bindings.get(2).descriptorCount(1)
+            bindings.get(2).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
 
             val createInfo = VkDescriptorSetLayoutCreateInfo.callocStack(this)
             createInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
-            createInfo.pBindings(textureBinding)
+            createInfo.pBindings(bindings)
 
             val pBuffer = mallocLong(1)
             if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, Allocator, pBuffer) != VK_SUCCESS) {
                 error("Failed to create descriptor set layout")
             }
-            descriptorLayoutTexture = !pBuffer
+            defaultDescriptorLayout = !pBuffer
 
-            val uboBinding = VkDescriptorSetLayoutBinding.callocStack(1, this)
-            uboBinding.binding(0)
-            uboBinding.descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-            uboBinding.descriptorCount(1)
-            uboBinding.stageFlags(VK_SHADER_STAGE_VERTEX_BIT)
-            createInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
-            createInfo.pBindings(uboBinding)
-
-            if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, Allocator, pBuffer) != VK_SUCCESS) {
-                error("Failed to create descriptor set layout")
-            }
-            descriptorLayoutUBO = !pBuffer
-
-            val descriptorSetLayouts = mallocLong(2)
-            descriptorSetLayouts.put(0, descriptorLayoutTexture)
-            descriptorSetLayouts.put(1, descriptorLayoutUBO)
+            val descriptorSetLayouts = mallocLong(1)
+            descriptorSetLayouts.put(0, defaultDescriptorLayout)
             pipelineLayoutInfo.pSetLayouts(descriptorSetLayouts)
 
             val pPipelineLayout = mallocLong(1)
             vkCreatePipelineLayout(logicalDevice, pipelineLayoutInfo, Allocator, pPipelineLayout).checkVKErrors()
-            pipelineLayout = !pPipelineLayout
+            defaultGraphicsPipelineLayout = !pPipelineLayout
 
             val depthStencil = VkPipelineDepthStencilStateCreateInfo.callocStack(this)
             depthStencil.sType(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO)
@@ -582,7 +605,7 @@ object VulkanRenderingEngine: IRenderEngine {
             val pipelineInfo = VkGraphicsPipelineCreateInfo.callocStack(1, this)
             pipelineInfo.sType(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO)
             pipelineInfo.pStages(shaderStages)
-            pipelineInfo.layout(pipelineLayout)
+            pipelineInfo.layout(defaultGraphicsPipelineLayout)
             pipelineInfo.pDepthStencilState(depthStencil)
 
             pipelineInfo.pColorBlendState(colorBlending)
@@ -649,15 +672,15 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Creates the uniform buffers for shaders, one per frame
      */
-    fun prepareUniformBuffer(): Pair<List<VkBuffer>, List<VkDeviceMemory>> {
+    fun prepareUniformBuffers(count: Int = MaxObjects): Pair<List<VkBuffer>, List<VkDeviceMemory>> {
         return useStack {
-            val bufferSize = UniformBufferObject.SizeOf
+            val bufferSize = UniformBufferObject.SizeOf*count
             val bufferList = mutableListOf<VkBuffer>()
             val memoryList = mutableListOf<VkDeviceMemory>()
             for (i in swapchainImages.indices) {
                 val pBuffer = mallocLong(1)
                 val pMemory = mallocLong(1)
-                createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, pBuffer, pMemory)
+                createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, pBuffer, pMemory)
                 bufferList += !pBuffer
                 memoryList += !pMemory
             }
@@ -670,7 +693,7 @@ object VulkanRenderingEngine: IRenderEngine {
      * Allocates and upload a given descriptor set to Vulkan.
      */
     // TODO: move somewhere else, will depend on shaders
-    fun createDescriptorSetFromBuilder(layout: VkDescriptorSetLayout, builder: DescriptorSetBuilder): DescriptorSet {
+    fun createDescriptorSetFromBuilder(layout: VkDescriptorSetLayout, builder: DescriptorSetUpdateBuilder): DescriptorSet {
         val actions = builder.bindings
         return useStack {
             val allocInfo = VkDescriptorSetAllocateInfo.callocStack(this)
@@ -687,27 +710,36 @@ object VulkanRenderingEngine: IRenderEngine {
                 error("Failed to allocate descriptor sets")
             }
             val descriptorSets = swapchainImages.indices.mapIndexed { index, _ -> pSets[index] }
+            val result = DescriptorSet(descriptorSets.toTypedArray())
+            updateDescriptorSet(result, builder)
+            result
+        }
+    }
 
+    fun updateDescriptorSet(descriptorSet: DescriptorSet, builder: DescriptorSetUpdateBuilder) {
+        val bindings = builder.bindings
+        useStack {
+            val target = VkWriteDescriptorSet.callocStack(bindings.size* swapchainImages.size, this)
             for(i in swapchainImages.indices) {
-                if(actions.isNotEmpty()) {
-                    val descriptorWrites = VkWriteDescriptorSet.callocStack(actions.size, this)
+                val targetSet = descriptorSet[i]
 
-                    for(j in actions.indices) {
-                        actions[j].describe(this, descriptorWrites.get(j), descriptorSets[i], i)
-                    }
+                for(j in bindings.indices) {
+                    val subtarget = target.get(j* swapchainImages.size+i)
+                    subtarget.sType(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
+                    subtarget.dstSet(targetSet)
 
-                    vkUpdateDescriptorSets(logicalDevice, descriptorWrites, null)
+                    bindings[j].describe(this, subtarget, targetSet, i)
                 }
             }
 
-            DescriptorSet(descriptorSets.toTypedArray())
+            vkUpdateDescriptorSets(logicalDevice, target, null)
         }
     }
 
     private fun createDescriptorPool(maxSize: Int = 100): VkDescriptorPool {
         return useStack {
             val poolSize = VkDescriptorPoolSize.callocStack(3, this)
-            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+            poolSize.get(0).type(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
             poolSize.get(0).descriptorCount(swapchainImages.size*maxSize) // one per frame
 
             poolSize.get(1).type(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
@@ -1184,19 +1216,21 @@ object VulkanRenderingEngine: IRenderEngine {
      * Tells Vulkan to start using the given descriptor sets from now on.
      * Set order is important
      */
-    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, vararg sets: DescriptorSet) {
+    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, uboID: Int, vararg sets: DescriptorSet) {
         useStack {
             val pSets = mallocLong(sets.size)
             for(i in sets.indices) {
                 pSets.put(i, sets[i][commandBufferIndex])
             }
+            val offsets = mallocInt(1)
+            offsets.put(0, (uboID*UniformBufferObject.SizeOf).toInt())
             VK10.vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipelineLayout,
+                defaultGraphicsPipelineLayout,
                 0,
                 pSets,
-                null
+                offsets
             )
         }
     }
@@ -1320,6 +1354,18 @@ object VulkanRenderingEngine: IRenderEngine {
             vkGetPhysicalDeviceProperties(device, properties)
             if(!checkExtensions(device)) return@useStack false
             if(!features.samplerAnisotropy()) return@useStack false
+
+            // requires indexing
+            val indexingFeatures = VkPhysicalDeviceDescriptorIndexingFeaturesEXT.callocStack(this)
+            indexingFeatures.sType(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT)
+
+            val features2 = VkPhysicalDeviceFeatures2.callocStack(this)
+            features2.sType(VK11.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+            features2.pNext(indexingFeatures.address())
+            VK11.vkGetPhysicalDeviceFeatures2(device, features2)
+
+            if(!indexingFeatures.shaderSampledImageArrayNonUniformIndexing() || !indexingFeatures.descriptorBindingPartiallyBound() || !indexingFeatures.runtimeDescriptorArray()) return@useStack false
+
             val swapchainSupport = querySwapchainSupport(device)
             if(swapchainSupport.formats.isEmpty() || swapchainSupport.presentModes.isEmpty()) return@useStack false
             findQueueFamilies(device).isComplete
@@ -1460,8 +1506,6 @@ object VulkanRenderingEngine: IRenderEngine {
         currentFrame = (currentFrame + 1) % maxFramesInFlight
     }
 
-    private val ubo = UniformBufferObject()
-
     private fun updateUniformBuffer(frameIndex: Int) {
         var forward = 0f
         var strafe = 0f
@@ -1481,12 +1525,11 @@ object VulkanRenderingEngine: IRenderEngine {
         val direction by lazy { Vector3f() }
         if (strafe != 0f || forward != 0f) {
             direction.set(-strafe, -forward, 0f)
-            direction/*.normalize()*/.rotateAxis(-camera.yaw, 0f, 0f, 1f)
+            direction/*.normalize()*/.rotateAxis(camera.yaw, 0f, 0f, 1f)
             val speed = 0.01f
             direction.mul(speed)
             camera.position.add(direction)
         }
-        camera.updateUBO(ubo)
 
         if(scene != null) {
             scene!!.preRenderFrame(frameIndex, camera)
@@ -1550,7 +1593,7 @@ object VulkanRenderingEngine: IRenderEngine {
         framebufferResized = false
 
         createSwapchain()
-        createImageViews()
+        createRenderImageViews()
         createCamera()
         createRenderPass()
         createGraphicsPipeline()
@@ -1572,7 +1615,7 @@ object VulkanRenderingEngine: IRenderEngine {
         destroyCommandBuffers()
 
         vkDestroyPipeline(logicalDevice, graphicsPipeline, Allocator)
-        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, defaultGraphicsPipelineLayout, Allocator)
         vkDestroyRenderPass(logicalDevice, renderPass, Allocator)
 
         for(view in swapchainImageViews) {
@@ -1684,6 +1727,13 @@ object VulkanRenderingEngine: IRenderEngine {
         initSemaphore.acquire()
     }
 
+    private fun nextTextureID(): Int {
+        if(textureID >= MaxTextures) {
+            error("No more texture space")
+        }
+        return textureID++
+    }
+
     /**
      * Load a texture into Vulkan.
      * Caching is applied
@@ -1698,7 +1748,11 @@ object VulkanRenderingEngine: IRenderEngine {
             createTextureImage(path, pImage, pImageMemory)
             val imageView = createImageView(!pImage, VK_FORMAT_R8G8B8A8_SRGB)
             // TODO: custom sampler
-            val texture = Texture(!pImage, imageView, linearSampler)
+            val texture = Texture(nextTextureID(), !pImage, imageView)
+
+            imageViews[texture.textureID] = imageView
+
+            updateDescriptorSet(defaultShaderDescriptor, DescriptorSetUpdateBuilder().textureSampling(texture))
             activeTextures[path] = texture
 
             texture
@@ -1716,5 +1770,28 @@ object VulkanRenderingEngine: IRenderEngine {
         val model = Model(path)
         activeModels[path] = model
         return model
+    }
+
+    private fun nextUBOID(): Int {
+        if(uboID >= MaxObjects) {
+            error("out of UBO space")
+        }
+        return uboID++
+    }
+
+    fun createUBO(): UniformBufferObject {
+        return UniformBufferObject(nextUBOID())
+    }
+
+    private var currentTexture: Texture? = null
+
+    /**
+     * Only for use when recording to a command buffer
+     */
+    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipeline: VkPipeline = defaultGraphicsPipelineLayout) {
+        if(tex != currentTexture) {
+            vkCmdPushConstants(commandBuffer, pipeline, VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
+            currentTexture = tex
+        }
     }
 }

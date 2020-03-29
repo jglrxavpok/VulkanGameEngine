@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.render.*
+import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -14,7 +15,7 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
     /**
      * Used by the rendering engine to know what texture to use
      */
-    override val descriptorSet by VulkanRenderingEngine.load(DescriptorSet.Companion::Empty) {
+    /*override val descriptorSet by VulkanRenderingEngine.load(DescriptorSet.Companion::Empty) {
         val builder = DescriptorSetBuilder()
         if(diffuseTexture != null) {
             builder.textureSampling(diffuseTexture.texture)
@@ -22,10 +23,13 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
             builder.textureSampling(VulkanRenderingEngine.WhiteTexture)
         }
         VulkanRenderingEngine.createDescriptorSetFromBuilder(VulkanRenderingEngine.descriptorLayoutTexture, builder)
-    }
+    } = VulkanRenderingEngine.descriptorLayoutTexture*/
 
-    fun prepareDescriptors(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, vararg additionalSets: DescriptorSet) {
-        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, descriptorSet, *additionalSets)
+    fun prepareDescriptors(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, uboID: Int) {
+        // TODO: change depending on shader
+        val tex = diffuseTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
+        VulkanRenderingEngine.bindTexture(commandBuffer, tex)
+        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, uboID, VulkanRenderingEngine.defaultShaderDescriptor)
     }
 }
 

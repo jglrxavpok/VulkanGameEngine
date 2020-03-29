@@ -5,32 +5,26 @@ import org.joml.Matrix4f
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VK10
+import org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE
+import org.lwjgl.vulkan.VK10.vkFlushMappedMemoryRanges
 import org.lwjgl.vulkan.VkDevice
+import org.lwjgl.vulkan.VkMappedMemoryRange
 import java.nio.ByteBuffer
+import kotlin.math.log
 
 /**
  * Uniform Buffer Objects are used to pass variables to shaders without changing the rendering pipeline
  */
-class UniformBufferObject: ShaderResource(), Descriptor {
+class UniformBufferObject(val uboID: Int): ShaderResource(), Descriptor {
 
     companion object {
-        val SizeOf = sizeof<Matrix4f>() * 3L
+        val SizeOf = sizeof<Matrix4f>() * 3L + 64/*padding*/
+        val Padding = ByteArray(64) { 0 }
     }
 
     val model = Matrix4f()
     val view = Matrix4f()
     val proj = Matrix4f()
-
-    internal val buffers = mutableListOf<VkBuffer>()
-    private val memories = mutableListOf<VkDeviceMemory>()
-
-    override val descriptorSet by VulkanRenderingEngine.load(DescriptorSet.Companion::Empty) {
-        val preparation = VulkanRenderingEngine.prepareUniformBuffer()
-        buffers.addAll(preparation.first)
-        memories.addAll(preparation.second)
-
-        VulkanRenderingEngine.createDescriptorSetFromBuilder(VulkanRenderingEngine.descriptorLayoutUBO, DescriptorSetBuilder().ubo(this))
-    }
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
         model.get(buffer)
@@ -39,6 +33,8 @@ class UniformBufferObject: ShaderResource(), Descriptor {
         buffer.skip(16*4)
         proj.get(buffer)
         buffer.skip(16*4)
+
+        buffer.put(Padding)
         return buffer
     }
 
@@ -56,37 +52,32 @@ class UniformBufferObject: ShaderResource(), Descriptor {
      * Writes this UBO to the correct memory, depending on the frame in flight index
      */
     fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
-        if(buffers.size < frameIndex || memories.size < frameIndex) { // don't try to update memory we don't have yet
-            return
-        }
         val bufferSize = SizeOf
         val ppData = stack.mallocPointer(1)
         val data = write(stack.malloc(bufferSize.toInt()))
+        val memory = VulkanRenderingEngine.getUBOMemory(frameIndex)
         VK10.vkMapMemory(
             logicalDevice,
-            memories[frameIndex],
-            0,
+            memory,
+            uboID* SizeOf,
             bufferSize,
             0,
             ppData
         )
         data.position(0)
         MemoryUtil.memCopy(MemoryUtil.memAddress(data), !ppData, bufferSize)
+
+        val memoryRange = VkMappedMemoryRange.callocStack(stack);
+        memoryRange.sType(VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE)
+        memoryRange.memory(memory);
+        memoryRange.offset(uboID* SizeOf)
+        memoryRange.size(SizeOf);
+        vkFlushMappedMemoryRanges(logicalDevice, memoryRange)
+
         VK10.vkUnmapMemory(
             logicalDevice,
-            memories[frameIndex]
+            VulkanRenderingEngine.getUBOMemory(frameIndex)
         )
     }
 
-    /**
-     * Releases buffers and memory used by this object
-     */
-    fun free() {
-        buffers.forEach {
-            VK10.vkDestroyBuffer(VulkanRenderingEngine.logicalDevice, it, VulkanRenderingEngine.Allocator)
-        }
-        memories.forEach {
-            VK10.vkFreeMemory(VulkanRenderingEngine.logicalDevice, it, VulkanRenderingEngine.Allocator)
-        }
-    }
 }

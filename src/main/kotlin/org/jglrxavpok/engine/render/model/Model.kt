@@ -24,7 +24,7 @@ class Model {
     val path: String
     private val meshes = mutableListOf<Mesh>()
     private val materials = mutableListOf<Material>()
-    val ubo = UniformBufferObject()
+    val ubo = VulkanRenderingEngine.createUBO()
 
     /**
      * Create a copy of the given model
@@ -184,7 +184,7 @@ class Model {
      * Releases the UBO resources and each mesh
      */
     fun free(logicalDevice: VkDevice) {
-        ubo.free()
+        // FIXME ubo.free()
         meshes.forEach {
             it.free(logicalDevice)
         }

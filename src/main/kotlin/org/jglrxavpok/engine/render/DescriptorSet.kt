@@ -1,8 +1,11 @@
 package org.jglrxavpok.engine.render
 
+import org.jglrxavpok.engine.VkBuffer
 import org.jglrxavpok.engine.VkDescriptorSet
+import org.jglrxavpok.engine.VkSampler
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10
+import org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE
 import org.lwjgl.vulkan.VkDescriptorBufferInfo
 import org.lwjgl.vulkan.VkDescriptorImageInfo
 import org.lwjgl.vulkan.VkWriteDescriptorSet
@@ -13,10 +16,6 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet
  * 'sets' is the sets used by Vulkan, one per frame in flight
  */
 class DescriptorSet(val sets: Array<VkDescriptorSet>) {
-
-    companion object {
-        fun Empty() = VulkanRenderingEngine.emptyDescriptor
-    }
 
     operator fun get(index: Int): VkDescriptorSet {
         return sets[index]
@@ -30,13 +29,13 @@ interface Descriptor {
     /**
      * Descriptor set to represent this object
      */
-    val descriptorSet: DescriptorSet
+   // val descriptorSet: DescriptorSet
 }
 
 /**
- * Allows to create a descriptor
+ * Allows to update a descriptor
  */
-class DescriptorSetBuilder {
+class DescriptorSetUpdateBuilder {
 
     internal val bindings = mutableListOf<Binding>()
 
@@ -54,20 +53,19 @@ class DescriptorSetBuilder {
     /**
      * Texture binding
      */
-    data class TextureBinding(val texture: Texture): Binding {
+    class TextureBinding(val texture: Texture): Binding {
         // TODO: binding index
         override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val imageInfo = VkDescriptorImageInfo.callocStack(1, stack)
+
             imageInfo.imageLayout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             imageInfo.imageView(texture.imageView)
-            imageInfo.sampler(texture.sampler)
+            imageInfo.sampler(0)
 
-            target.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
-            target.dstSet(targetSet)
-            target.dstBinding(0) // binding for our texture
-            target.dstArrayElement(0) // 0 because we are not writing to an array
+            target.dstBinding(1) // binding for our texture
+            target.dstArrayElement(texture.textureID) // 0 because we are not writing to an array
 
-            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
             target.pImageInfo(imageInfo)
         }
     }
@@ -75,28 +73,40 @@ class DescriptorSetBuilder {
     /**
      * Uniform Buffer Object Binding
      */
-    data class UBOBinding(val ubo: UniformBufferObject): Binding {
+    data class UBOBinding(val uboBuffers: List<VkBuffer>): Binding {
         // TODO: index
         override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val bufferInfo = VkDescriptorBufferInfo.callocStack(1, stack)
-            bufferInfo.buffer(ubo.buffers[frameIndex])
+            bufferInfo.buffer(uboBuffers[frameIndex])
             bufferInfo.offset(0)
-            bufferInfo.range(UniformBufferObject.SizeOf)
+            bufferInfo.range(VK_WHOLE_SIZE)
 
-            target.sType(VK10.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
-            target.dstSet(targetSet)
             target.dstBinding(0) // binding for our UBO
             target.dstArrayElement(0) // 0 because we are not writing to an array
 
-            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
             target.pBufferInfo(bufferInfo)
+        }
+    }
+
+    data class SamplerBinding(val sampler: VkSampler): Binding {
+        override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
+            val imageInfo = VkDescriptorImageInfo.callocStack(1, stack)
+            imageInfo.sampler(sampler)
+
+            target.dstBinding(2) // binding for our sampler
+            target.dstArrayElement(0)
+
+            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLER)
+            target.pImageInfo(imageInfo)
+
         }
     }
 
     /**
      * Adds a new texture binding
      */
-    fun textureSampling(texture: Texture): DescriptorSetBuilder {
+    fun textureSampling(texture: Texture): DescriptorSetUpdateBuilder {
         bindings += TextureBinding(texture)
         return this
     }
@@ -104,8 +114,16 @@ class DescriptorSetBuilder {
     /**
      * Adds a new ubo binding
      */
-    fun ubo(uniformBufferObject: UniformBufferObject): DescriptorSetBuilder {
-        bindings += UBOBinding(uniformBufferObject)
+    fun ubo(buffers: List<VkBuffer>): DescriptorSetUpdateBuilder {
+        bindings += UBOBinding(buffers)
+        return this
+    }
+
+    /**
+     * Adds a new ubo binding
+     */
+    fun sampler(sampler: VkSampler): DescriptorSetUpdateBuilder {
+        bindings += SamplerBinding(sampler)
         return this
     }
 }

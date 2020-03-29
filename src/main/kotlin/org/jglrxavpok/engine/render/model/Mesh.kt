@@ -64,7 +64,7 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      */
     fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubo: UniformBufferObject) {
         MemoryStack.stackPush().use {
-            material.prepareDescriptors(commandBuffer, commandBufferIndex, ubo.descriptorSet)
+            material.prepareDescriptors(commandBuffer, commandBufferIndex, ubo.uboID)
 
             val pVertexBuffers = it.mallocLong(1)
             pVertexBuffers.put(vertexBuffer)
