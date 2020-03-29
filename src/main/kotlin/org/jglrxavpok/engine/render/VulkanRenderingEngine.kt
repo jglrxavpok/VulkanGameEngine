@@ -36,7 +36,7 @@ import java.util.concurrent.Semaphore
  */
 object VulkanRenderingEngine: IRenderEngine {
 
-    val MaxObjects = 100000
+    val MaxObjects = 256_000
     val MaxTextures = 256
     val EngineName = "jglrEngine"
     val Version = Version(0, 0, 1, "indev")

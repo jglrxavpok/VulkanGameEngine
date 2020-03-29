@@ -79,7 +79,7 @@ class DescriptorSetUpdateBuilder {
             val bufferInfo = VkDescriptorBufferInfo.callocStack(1, stack)
             bufferInfo.buffer(uboBuffers[frameIndex])
             bufferInfo.offset(0)
-            bufferInfo.range(VK_WHOLE_SIZE)
+            bufferInfo.range(UniformBufferObject.SizeOf)
 
             target.dstBinding(0) // binding for our UBO
             target.dstArrayElement(0) // 0 because we are not writing to an array
