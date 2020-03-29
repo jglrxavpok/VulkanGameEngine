@@ -99,7 +99,6 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLER)
             target.pImageInfo(imageInfo)
-
         }
     }
 

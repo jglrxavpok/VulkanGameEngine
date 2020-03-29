@@ -92,7 +92,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private var currentFrame = 0
 
     // End of Vulkan objects
-    lateinit var camera: Camera
+    lateinit var defaultCamera: Camera
 
     private var previousPosX = 0.0
     private var previousPosY = 0.0
@@ -110,8 +110,12 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var emptyDescriptor: DescriptorSet
     private lateinit var uboMemories:  List<VkDeviceMemory>
     private val imageViews = mutableMapOf<Int, VkImageView>()
+    private val renderGroups = mutableListOf<RenderGroup>()
     private var textureID = 0
     private var uboID = 0
+
+    lateinit var defaultPipeline: GraphicsPipeline
+    lateinit var defaultRenderGroup: RenderGroup
 
     /**
      * Initializes the render engine
@@ -168,7 +172,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createCamera()
         createRenderImageViews()
         createRenderPass()
-        createGraphicsPipeline()
+        defaultPipeline = createGraphicsPipeline(GraphicsPipelineBuilder())
         createCommandPool()
         createDepthResources()
         createFramebuffers()
@@ -184,6 +188,11 @@ object VulkanRenderingEngine: IRenderEngine {
             DescriptorSetUpdateBuilder().sampler(linearSampler).ubo(uboInfo.first))
 
         WhiteTexture = createTexture("/textures/white.png")
+
+        defaultRenderGroup = object: RenderGroup {
+            override val pipeline get() = defaultPipeline
+        }
+        renderGroups += defaultRenderGroup
 
         initSemaphore.release()
     }
@@ -374,8 +383,8 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun createCamera() {
-        camera = Camera(swapchainExtent.width(), swapchainExtent.height())
-        camera.position.set(0f, 0f, 0f)
+        defaultCamera = Camera(swapchainExtent.width(), swapchainExtent.height())
+        defaultCamera.position.set(0f, 0f, 0f)
     }
 
     private fun createRenderImageViews() {
@@ -454,28 +463,29 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createGraphicsPipeline() {
+    fun createGraphicsPipeline(builder: GraphicsPipelineBuilder): GraphicsPipeline {
         // TODO: Custom shaders
         // TODO: Combine?
-        // TODO Specialization Info
-        val fragCode = javaClass.getResourceAsStream("/shaders/default.fragc").readBytes()
-        val vertCode = javaClass.getResourceAsStream("/shaders/default.vertc").readBytes()
+        // TODO: Specialization Info
+        // TODO: allow own render passes
+        val fragCode = javaClass.getResourceAsStream(builder.fragmentShaderModule).readBytes()
+        val vertCode = javaClass.getResourceAsStream(builder.vertexShaderModule).readBytes()
         val fragmentShaderModule = createShaderModule(fragCode)
         val vertexShaderModule = createShaderModule(vertCode)
 
-        useStack {
+        val result = useStack {
             val vertShaderStageInfo = VkPipelineShaderStageCreateInfo.callocStack(this)
             vertShaderStageInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
             vertShaderStageInfo.module(vertexShaderModule)
             vertShaderStageInfo.stage(VK_SHADER_STAGE_VERTEX_BIT)
-            vertShaderStageInfo.pName(UTF8("main"))
+            vertShaderStageInfo.pName(UTF8(builder.vertexShaderEntryPoint))
 
 
             val fragShaderStageInfo = VkPipelineShaderStageCreateInfo.callocStack(this)
             fragShaderStageInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO)
             fragShaderStageInfo.module(fragmentShaderModule)
             fragShaderStageInfo.stage(VK_SHADER_STAGE_FRAGMENT_BIT)
-            fragShaderStageInfo.pName(UTF8("main"))
+            fragShaderStageInfo.pName(UTF8(builder.fragmentShaderEntryPoint))
 
             val shaderStages = VkPipelineShaderStageCreateInfo.callocStack(2, this)
             shaderStages.put(vertShaderStageInfo)
@@ -578,14 +588,14 @@ object VulkanRenderingEngine: IRenderEngine {
             createInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
             createInfo.pBindings(bindings)
 
-            val pBuffer = mallocLong(1)
-            if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, Allocator, pBuffer) != VK_SUCCESS) {
+            val pDescriptorSetLayout = mallocLong(1)
+            if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, Allocator, pDescriptorSetLayout) != VK_SUCCESS) {
                 error("Failed to create descriptor set layout")
             }
-            defaultDescriptorLayout = !pBuffer
+            defaultDescriptorLayout = !pDescriptorSetLayout
 
             val descriptorSetLayouts = mallocLong(1)
-            descriptorSetLayouts.put(0, defaultDescriptorLayout)
+            descriptorSetLayouts.put(0, !pDescriptorSetLayout)
             pipelineLayoutInfo.pSetLayouts(descriptorSetLayouts)
 
             val pPipelineLayout = mallocLong(1)
@@ -623,11 +633,13 @@ object VulkanRenderingEngine: IRenderEngine {
             val pGraphicsPipeline = mallocLong(1)
             // TODO: Possibility to instanciate multiple pipelines at once
             vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, pipelineInfo, Allocator, pGraphicsPipeline).checkVKErrors()
-            graphicsPipeline = !pGraphicsPipeline
+            GraphicsPipeline(!pGraphicsPipeline, !pPipelineLayout)
         }
 
         vkDestroyShaderModule(logicalDevice, fragmentShaderModule, Allocator)
         vkDestroyShaderModule(logicalDevice, vertexShaderModule, Allocator)
+
+        return result
     }
 
     private fun createFramebuffers() {
@@ -1200,9 +1212,14 @@ object VulkanRenderingEngine: IRenderEngine {
                         VK_SUBPASS_CONTENTS_INLINE
                     ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
-                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
+                    scene?.let {
+                        // TODO: parallelize?
+                        for(group in renderGroups) {
+                            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, group.pipeline.handle)
 
-                    scene?.let { it.recordCommandBuffer(commandBuffer, index) }
+                            it.recordCommandBuffer(group, commandBuffer, index)
+                        }
+                    }
 
                     vkCmdEndRenderPass(commandBuffer)
 
@@ -1525,14 +1542,14 @@ object VulkanRenderingEngine: IRenderEngine {
         val direction by lazy { Vector3f() }
         if (strafe != 0f || forward != 0f) {
             direction.set(-strafe, -forward, 0f)
-            direction/*.normalize()*/.rotateAxis(camera.yaw, 0f, 0f, 1f)
+            direction/*.normalize()*/.rotateAxis(defaultCamera.yaw, 0f, 0f, 1f)
             val speed = 0.01f
             direction.mul(speed)
-            camera.position.add(direction)
+            defaultCamera.position.add(direction)
         }
 
         if(scene != null) {
-            scene!!.preRenderFrame(frameIndex, camera)
+            scene!!.preRenderFrame(frameIndex)
         }
     }
 
@@ -1596,7 +1613,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createRenderImageViews()
         createCamera()
         createRenderPass()
-        createGraphicsPipeline()
+        defaultPipeline = createGraphicsPipeline(GraphicsPipelineBuilder())
         createDepthResources()
         createFramebuffers()
         descriptorPool = createDescriptorPool()

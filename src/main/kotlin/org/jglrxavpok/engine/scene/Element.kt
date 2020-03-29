@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.scene
 
 import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.render.RenderGroup
 import org.joml.Quaternionf
 import org.joml.Vector3f
 import org.lwjgl.vulkan.VkCommandBuffer
@@ -41,16 +42,15 @@ open class Element {
     /**
      * Prepares the rendering of this element to the given command buffer
      */
-    fun recordCommandBuffer(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) = synchronized(renderingComponents) {
-        renderingComponents.forEach {
+    fun recordCommandBuffer(group: RenderGroup, commandBuffer: VkCommandBuffer, commandBufferIndex: Int) = synchronized(renderingComponents) {
+        renderingComponents.filter { it.renderGroup == group }.forEach {
             it.record(this, commandBuffer, commandBufferIndex)
         }
     }
 
-    // TODO: one per component?
-    fun preFrameRender(frameIndex: Int, camera: Camera) = synchronized(renderingComponents) {
+    fun preFrameRender(frameIndex: Int) = synchronized(renderingComponents) {
         renderingComponents.forEach {
-            it.preFrameRender(this, frameIndex, camera)
+            it.preFrameRender(this, frameIndex)
         }
     }
 

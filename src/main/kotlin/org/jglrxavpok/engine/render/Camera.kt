@@ -8,16 +8,18 @@ import org.joml.Vector3fc
 /**
  * Camera used to render
  */
-class Camera(swapchainWidth: Int, swapchainHeight: Int) {
+class Camera(aspectRatio: Float) {
 
     companion object {
         val UpAxis = Vector3f(0f, 0f, 1f)
         val AxisY = Vector3f(0f, 1f, 0f)
     }
 
+    constructor(swapchainWidth: Int, swapchainHeight: Int): this(swapchainWidth.toFloat() / swapchainHeight)
+
     private val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 0f, 1f))
     private val renderView = Matrix4f(view)
-    val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), swapchainWidth / swapchainHeight.toFloat(), 0.01f, 10000000f)
+    val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), aspectRatio, 0.01f, 10000000f)
     val forward: Vector3fc get()= view.transformDirection(AxisY, Vector3f())
 
     val position = Vector3f()

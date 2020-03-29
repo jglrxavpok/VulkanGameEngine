@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.scene
 
 import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.render.RenderGroup
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -14,6 +15,8 @@ interface Component {
  * Component that will render to framebuffer
  */
 interface RenderingComponent: Component {
+    val renderGroup: RenderGroup
+
     /**
      * Prepares the rendering of this component to the given buffer
      */
@@ -22,7 +25,7 @@ interface RenderingComponent: Component {
     /**
      * Updates information about the render matrices
      */
-    fun preFrameRender(element: Element, frameIndex: Int, camera: Camera)
+    fun preFrameRender(element: Element, frameIndex: Int)
 }
 
 /**
