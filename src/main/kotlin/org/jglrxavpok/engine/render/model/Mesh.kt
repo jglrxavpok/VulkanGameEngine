@@ -3,10 +3,10 @@ package org.jglrxavpok.engine.render.model
 import org.jglrxavpok.engine.VkBuffer
 import org.jglrxavpok.engine.render.UniformBufferObject
 import org.jglrxavpok.engine.render.Vertex
+import org.jglrxavpok.engine.render.VertexFormat
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10.*
 import org.lwjgl.vulkan.VkCommandBuffer
-import org.jglrxavpok.engine.render.Vertex.Companion.put
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.sizeof
 import org.lwjgl.system.MemoryUtil
@@ -15,7 +15,7 @@ import org.lwjgl.vulkan.VkDevice
 /**
  * Simple mesh. Contains vertices, indices and may possess a Material
  */
-class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, autoload: Boolean = true, val material: Material = Material.None) {
+class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, autoload: Boolean = true, val vertexFormat: VertexFormat = VertexFormat.Companion.Default, val material: Material = Material.None) {
 
     private var vertexBuffer: VkBuffer = -1
     private var indexBuffer: VkBuffer = -1
@@ -29,11 +29,11 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      * Load the mesh: allocates buffers, fill them
      */
     fun load() {
-        val vertexBufferSize = (vertices.size * Vertex.SizeOf).toLong()
+        val vertexBufferSize = (vertices.size * vertexFormat.size).toLong()
         val vertexBuffer = MemoryUtil.memAlloc(vertexBufferSize.toInt())
         val vertexFb = vertexBuffer.asFloatBuffer()
         for (vertex in vertices) {
-            vertexFb.put(vertex)
+            vertexFormat.write(vertex, vertexFb)
         }
         this.vertexBuffer = VulkanRenderingEngine.uploadBuffer(
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -66,18 +66,25 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
         MemoryStack.stackPush().use {
             material.prepareDescriptors(commandBuffer, commandBufferIndex, ubo.uboID)
 
-            val pVertexBuffers = it.mallocLong(1)
-            pVertexBuffers.put(vertexBuffer)
-            pVertexBuffers.flip()
-            val pOffsets = it.mallocLong(1)
-            pOffsets.put(0L)
-            pOffsets.flip()
-            vkCmdBindVertexBuffers(commandBuffer, 0, pVertexBuffers, pOffsets)
-
-            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32)
-
-            vkCmdDrawIndexed(commandBuffer, indices.size, 1, 0, 0, 0);
+            directRecord(it, commandBuffer)
         }
+    }
+
+    /**
+     * Only performs the recording, without applying the material
+     */
+    fun directRecord(stack: MemoryStack, commandBuffer: VkCommandBuffer) {
+        val pVertexBuffers = stack.mallocLong(1)
+        pVertexBuffers.put(vertexBuffer)
+        pVertexBuffers.flip()
+        val pOffsets = stack.mallocLong(1)
+        pOffsets.put(0L)
+        pOffsets.flip()
+        vkCmdBindVertexBuffers(commandBuffer, 0, pVertexBuffers, pOffsets)
+
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32)
+
+        vkCmdDrawIndexed(commandBuffer, indices.size, 1, 0, 0, 0);
     }
 
     /**

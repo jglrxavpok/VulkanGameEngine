@@ -3,6 +3,7 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.Model
 import org.joml.Vector3f
 import org.lwjgl.PointerBuffer
@@ -27,6 +28,7 @@ import org.jglrxavpok.engine.scene.Scene
 import org.lwjgl.stb.STBImage
 import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
 import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
+import org.lwjgl.vulkan.VK11.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 import java.nio.LongBuffer
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
@@ -67,12 +69,9 @@ object VulkanRenderingEngine: IRenderEngine {
     private var swapchainFormat: Int = -1
     private var swapchainPresentMode: VkPresentModeKHR = -1
     private var renderPass: VkRenderPass = -1
-    internal var defaultGraphicsPipelineLayout: VkPipelineLayout = -1
     private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
     private var descriptorPool: VkDescriptorPool = -1
-
-    var defaultDescriptorLayout: VkDescriptorSetLayout = -1
 
     internal var linearSampler: VkSampler = -1
 
@@ -107,6 +106,7 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var WhiteTexture: Texture
 
     lateinit var defaultShaderDescriptor: DescriptorSet
+    lateinit var renderToScreenShaderDescriptor: DescriptorSet
     lateinit var emptyDescriptor: DescriptorSet
     private lateinit var uboMemories:  List<VkDeviceMemory>
     private val imageViews = mutableMapOf<Int, VkImageView>()
@@ -115,7 +115,15 @@ object VulkanRenderingEngine: IRenderEngine {
     private var uboID = 0
 
     lateinit var defaultPipeline: GraphicsPipeline
+    lateinit var renderToScreenPipeline: GraphicsPipeline
     lateinit var defaultRenderGroup: RenderGroup
+
+    /**
+     * Special render group to compile the gbuffer info onto the screen
+     */
+    lateinit var toScreenGroup: RenderGroup
+    private val gColorImages = mutableListOf<ImageInfo>()
+    private lateinit var screenQuad: Mesh
 
     /**
      * Initializes the render engine
@@ -172,29 +180,62 @@ object VulkanRenderingEngine: IRenderEngine {
         createCamera()
         createRenderImageViews()
         createRenderPass()
-        defaultPipeline = createGraphicsPipeline(GraphicsPipelineBuilder())
+        defaultPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
+        renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
         createCommandPool()
         createDepthResources()
         createFramebuffers()
         linearSampler = createTextureSampler()
         descriptorPool = createDescriptorPool()
-        createCommandBuffers()
-        createSyncingMechanisms()
 
         val uboInfo = prepareUniformBuffers()
         uboMemories = uboInfo.second
 
-        defaultShaderDescriptor = createDescriptorSetFromBuilder(defaultDescriptorLayout,
+        defaultShaderDescriptor = createDescriptorSetFromBuilder(
+            defaultPipeline.descriptorSetLayouts[0],
             DescriptorSetUpdateBuilder().sampler(linearSampler).ubo(uboInfo.first))
+        renderToScreenShaderDescriptor = createDescriptorSetFromBuilder(
+            renderToScreenPipeline.descriptorSetLayouts[0],
+            DescriptorSetUpdateBuilder().subpassSampler { index -> gColorImages[index].view }
+        )
 
         WhiteTexture = createTexture("/textures/white.png")
 
         defaultRenderGroup = object: RenderGroup {
             override val pipeline get() = defaultPipeline
         }
+        toScreenGroup = object: RenderGroup {
+            override val pipeline get()= renderToScreenPipeline
+        }
         renderGroups += defaultRenderGroup
 
+        screenQuad = Mesh(listOf(
+            Vertex(Vector3f(-1f, -1f, 0f)),
+            Vertex(Vector3f(-1f, 1f, 0f)),
+            Vertex(Vector3f(1f, 1f, 0f)),
+            Vertex(Vector3f(1f, -1f, 0f))
+            ),
+            listOf(0u, 1u, 2u, 2u, 3u, 0u), vertexFormat = VertexFormat.Companion.ScreenPositionOnly)
+
+        createCommandBuffers()
+        createSyncingMechanisms()
+
         initSemaphore.release()
+    }
+
+    private fun renderToScreenPipelineBuilder() = GraphicsPipelineBuilder()
+        .vertexShaderModule("/shaders/gRender.vertc").fragmentShaderModule("/shaders/gRender.fragc")
+        .descriptorSetLayoutBindings(DescriptorSetLayoutBindings().subpassSampler())
+        .depthTest(false)
+        .depthWrite(false)
+        .subpass(1)
+        .useStencil(false)
+        .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
+
+    private fun gBufferPipelineBuilder(): GraphicsPipelineBuilder {
+        return GraphicsPipelineBuilder().descriptorSetLayoutBindings(
+            DescriptorSetLayoutBindings().uniformBuffer().textures(MaxTextures).sampler()
+        )
     }
 
     fun getUBOMemory(frameIndex: Int): VkDeviceMemory {
@@ -399,22 +440,17 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createRenderPass() {
         useStack {
-            val attachments = VkAttachmentDescription.callocStack(2, this)
-            val colorAttachment = attachments.get(0)
-            colorAttachment.format(swapchainFormat)
-            colorAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
+            val attachments = VkAttachmentDescription.callocStack(3, this)
+            prepareColorAttachment(attachments.get(0), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            prepareColorAttachment(attachments.get(1), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
-            colorAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
-            colorAttachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+            for(i in swapchainImages.indices) {
+                // VK_FORMAT_R16G16B16A16_SFLOAT for positions
+                val info = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                gColorImages += info
+            }
 
-            // TODO: stencil load/store behaviors
-            colorAttachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-            colorAttachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-
-            colorAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
-            colorAttachment.finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-
-            val depthAttachment = attachments.get(1)
+            val depthAttachment = attachments.get(2)
             depthAttachment.format(findDepthFormat())
             depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
             depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
@@ -424,43 +460,78 @@ object VulkanRenderingEngine: IRenderEngine {
             depthAttachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
             depthAttachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 
+            val screenBuffer = VkAttachmentReference.callocStack(1, this)
+            screenBuffer.attachment(0)
+            screenBuffer.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
-            val colorAttachmentRef = VkAttachmentReference.callocStack(1, this)
-            colorAttachmentRef.attachment(0)
-            colorAttachmentRef.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            val gColorRenderTarget = VkAttachmentReference.callocStack(1, this)
+            gColorRenderTarget.attachment(1)
+            gColorRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
             val depthAttachmentRef = VkAttachmentReference.callocStack(this)
-            depthAttachmentRef.attachment(1)
+            depthAttachmentRef.attachment(2)
             depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 
             // TODO: Multiple subpass for post-processing
-            val subpass = VkSubpassDescription.callocStack(1, this)
-            subpass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
+            val subpasses = VkSubpassDescription.callocStack(2, this)
+            val gBufferPass = subpasses.get(0)
+            gBufferPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
-            subpass.colorAttachmentCount(1)
-            subpass.pColorAttachments(colorAttachmentRef)
-            subpass.pDepthStencilAttachment(depthAttachmentRef)
+            gBufferPass.colorAttachmentCount(1)
+            gBufferPass.pColorAttachments(gColorRenderTarget)
+            gBufferPass.pDepthStencilAttachment(depthAttachmentRef)
 
-            val dependency = VkSubpassDependency.callocStack(1, this)
-            dependency.srcSubpass(VK_SUBPASS_EXTERNAL)
-            dependency.dstSubpass(0)
+            val gColorInput = VkAttachmentReference.callocStack(1, this)
+            gColorInput.attachment(1)
+            gColorInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
-            dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-            dependency.srcAccessMask(0)
+            val renderToScreenPass = subpasses.get(1)
+            renderToScreenPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
-            dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-            dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+            renderToScreenPass.colorAttachmentCount(1)
+            renderToScreenPass.pInputAttachments(gColorInput)
+            renderToScreenPass.pColorAttachments(screenBuffer)
+
+
+            val dependency = VkSubpassDependency.callocStack(2, this)
+            prepareDependency(dependency.get(0), VK_SUBPASS_EXTERNAL, 0)
+            prepareDependency(dependency.get(1), 0, 1)
 
             val renderPassInfo = VkRenderPassCreateInfo.callocStack(this)
             renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO)
             renderPassInfo.pAttachments(attachments)
-            renderPassInfo.pSubpasses(subpass)
+            renderPassInfo.pSubpasses(subpasses)
             renderPassInfo.pDependencies(dependency)
 
             val pRenderPass = mallocLong(1)
             vkCreateRenderPass(logicalDevice, renderPassInfo, Allocator, pRenderPass).checkVKErrors()
             renderPass = !pRenderPass
         }
+    }
+
+    private fun prepareDependency(dependency: VkSubpassDependency, from: Int, to: Int) {
+        dependency.srcSubpass(from)
+        dependency.dstSubpass(to)
+
+        dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+        dependency.srcAccessMask(0)
+
+        dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+        dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+    }
+
+    private fun prepareColorAttachment(description: VkAttachmentDescription, format: Int, initialLayout: VkImageLayout, finalLayout: VkImageLayout, loadOp: Int = VK_ATTACHMENT_LOAD_OP_CLEAR) {
+        description.format(format)
+        description.samples(VK_SAMPLE_COUNT_1_BIT)
+
+        description.loadOp(loadOp)
+        description.storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+
+        description.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+        description.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+
+        description.initialLayout(initialLayout)
+        description.finalLayout(finalLayout)
     }
 
     fun createGraphicsPipeline(builder: GraphicsPipelineBuilder): GraphicsPipeline {
@@ -494,8 +565,8 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val vertexInputInfo = VkPipelineVertexInputStateCreateInfo.callocStack(this)
             vertexInputInfo.sType(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO)
-            val bindingDescription = Vertex.getBindingDescription(this)
-            val attributeDescriptions = Vertex.getAttributeDescriptions(this)
+            val bindingDescription = builder.vertexFormat.callocBindingDescription(this)
+            val attributeDescriptions = builder.vertexFormat.callocAttributeDescriptions(this)
             vertexInputInfo.pVertexAttributeDescriptions(attributeDescriptions)
             vertexInputInfo.pVertexBindingDescriptions(bindingDescription)
 
@@ -568,21 +639,7 @@ object VulkanRenderingEngine: IRenderEngine {
             pushConstants.size(MaxTextures)
             pipelineLayoutInfo.pPushConstantRanges(pushConstants)
 
-            val bindings = VkDescriptorSetLayoutBinding.callocStack(3, this)
-            bindings.get(0).binding(0)
-            bindings.get(0).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-            bindings.get(0).descriptorCount(1)
-            bindings.get(0).stageFlags(VK_SHADER_STAGE_VERTEX_BIT)
-
-            bindings.get(1).binding(1)
-            bindings.get(1).descriptorType(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
-            bindings.get(1).descriptorCount(MaxTextures)
-            bindings.get(1).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
-
-            bindings.get(2).binding(2)
-            bindings.get(2).descriptorType(VK_DESCRIPTOR_TYPE_SAMPLER)
-            bindings.get(2).descriptorCount(1)
-            bindings.get(2).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
+            val bindings = builder.descriptorSetLayoutBindings.calloc(this)
 
             val createInfo = VkDescriptorSetLayoutCreateInfo.callocStack(this)
             createInfo.sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
@@ -592,7 +649,6 @@ object VulkanRenderingEngine: IRenderEngine {
             if(vkCreateDescriptorSetLayout(logicalDevice, createInfo, Allocator, pDescriptorSetLayout) != VK_SUCCESS) {
                 error("Failed to create descriptor set layout")
             }
-            defaultDescriptorLayout = !pDescriptorSetLayout
 
             val descriptorSetLayouts = mallocLong(1)
             descriptorSetLayouts.put(0, !pDescriptorSetLayout)
@@ -600,22 +656,21 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val pPipelineLayout = mallocLong(1)
             vkCreatePipelineLayout(logicalDevice, pipelineLayoutInfo, Allocator, pPipelineLayout).checkVKErrors()
-            defaultGraphicsPipelineLayout = !pPipelineLayout
 
             val depthStencil = VkPipelineDepthStencilStateCreateInfo.callocStack(this)
             depthStencil.sType(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO)
-            depthStencil.depthTestEnable(true)
-            depthStencil.depthWriteEnable(true)
+            depthStencil.depthTestEnable(builder.depthTest)
+            depthStencil.depthWriteEnable(builder.depthWrite)
             depthStencil.depthCompareOp(VK_COMPARE_OP_LESS)
 
             depthStencil.depthBoundsTestEnable(false)
             // TODO: change if stencil enabled
-            depthStencil.stencilTestEnable(false)
+            depthStencil.stencilTestEnable(builder.useStencil)
 
             val pipelineInfo = VkGraphicsPipelineCreateInfo.callocStack(1, this)
             pipelineInfo.sType(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO)
             pipelineInfo.pStages(shaderStages)
-            pipelineInfo.layout(defaultGraphicsPipelineLayout)
+            pipelineInfo.layout(!pPipelineLayout)
             pipelineInfo.pDepthStencilState(depthStencil)
 
             pipelineInfo.pColorBlendState(colorBlending)
@@ -626,14 +681,19 @@ object VulkanRenderingEngine: IRenderEngine {
             pipelineInfo.pMultisampleState(multisampling)
 
             pipelineInfo.renderPass(renderPass)
-            pipelineInfo.subpass(0) // TODO: Possible to use the same pipeline with multiple subpasses, granted they are compatible (https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#renderpass-compatibility)
+            pipelineInfo.subpass(builder.subpass) // TODO: Possible to use the same pipeline with multiple subpasses, granted they are compatible (https://www.khronos.org/registry/vulkan/specs/1.0/html/vkspec.html#renderpass-compatibility)
 
             // TODO: Base Pipeline for improved performance with similar pipelines
 
             val pGraphicsPipeline = mallocLong(1)
             // TODO: Possibility to instanciate multiple pipelines at once
             vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, pipelineInfo, Allocator, pGraphicsPipeline).checkVKErrors()
-            GraphicsPipeline(!pGraphicsPipeline, !pPipelineLayout)
+
+            val descriptorSetLayoutsList = mutableListOf<VkDescriptorSetLayout>()
+            for (i in 0 until 1) { // TODO: support multiple layouts?
+                descriptorSetLayoutsList += pDescriptorSetLayout[i]
+            }
+            GraphicsPipeline(!pGraphicsPipeline, !pPipelineLayout, descriptorSetLayoutsList)
         }
 
         vkDestroyShaderModule(logicalDevice, fragmentShaderModule, Allocator)
@@ -645,9 +705,10 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createFramebuffers() {
         val framebuffers = mutableListOf<VkFramebuffer>()
         useStack {
-            swapchainImageViews.forEach {
-                val attachments = mallocLong(2)
+            swapchainImageViews.forEachIndexed { index, it ->
+                val attachments = mallocLong(3)
                 attachments.put(it)
+                attachments.put(gColorImages[index].view)
                 attachments.put(depthImageView)
                 attachments.rewind()
 
@@ -837,14 +898,18 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createDepthResources() = useStack {
-        val depthFormat = findDepthFormat()
+    private fun createDepthResources() {
+        val imageInfo = createAttachmentImageView(findDepthFormat(), swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
+        depthImage = imageInfo.image
+        depthImageMemory = imageInfo.memory
+        depthImageView = imageInfo.view
+    }
+
+    private fun createAttachmentImageView(format: VkFormat, width: Int, height: Int, usage: VkImageUsageFlags, aspect: VkImageAspectFlags): ImageInfo = useStack {
         val pImage = mallocLong(1)
         val pMemory = mallocLong(1)
-        createImage(swapchainExtent.width(), swapchainExtent.height(), depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, pImage, pMemory)
-        depthImage = !pImage
-        depthImageMemory = !pMemory
-        depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT)
+        createImage(width, height, format, usage, pImage, pMemory)
+        ImageInfo(!pImage, !pMemory, createImageView(!pImage, format, aspect))
     }
 
     private fun hasStencilComponent(format: VkFormat) = format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT
@@ -1193,9 +1258,11 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
 
-                    val clearValues = VkClearValue.callocStack(2, this)
+                    val clearValues = VkClearValue.callocStack(3, this)
+                    // one per attachment
                     clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(1).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+                    clearValues.get(1).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(2).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
 
                     val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
                     renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
@@ -1221,8 +1288,24 @@ object VulkanRenderingEngine: IRenderEngine {
                         }
                     }
 
-                    vkCmdEndRenderPass(commandBuffer)
+                    vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
 
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, toScreenGroup.pipeline.handle)
+
+                    val pSets = mallocLong(1)
+                    pSets.put(0, renderToScreenShaderDescriptor[index])
+                    vkCmdBindDescriptorSets(
+                        commandBuffer,
+                        VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        renderToScreenPipeline.layout,
+                        0,
+                        pSets,
+                        null
+                    )
+
+                    screenQuad.directRecord(this, commandBuffer)
+
+                    vkCmdEndRenderPass(commandBuffer)
                     vkEndCommandBuffer(commandBuffer).checkVKErrors()
                 }
             }
@@ -1244,7 +1327,7 @@ object VulkanRenderingEngine: IRenderEngine {
             VK10.vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                defaultGraphicsPipelineLayout,
+                defaultPipeline.layout,
                 0,
                 pSets,
                 offsets
@@ -1609,11 +1692,13 @@ object VulkanRenderingEngine: IRenderEngine {
 
         framebufferResized = false
 
+        gColorImages.clear()
         createSwapchain()
         createRenderImageViews()
         createCamera()
         createRenderPass()
-        defaultPipeline = createGraphicsPipeline(GraphicsPipelineBuilder())
+        defaultPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
+        renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
         createDepthResources()
         createFramebuffers()
         descriptorPool = createDescriptorPool()
@@ -1632,7 +1717,7 @@ object VulkanRenderingEngine: IRenderEngine {
         destroyCommandBuffers()
 
         vkDestroyPipeline(logicalDevice, graphicsPipeline, Allocator)
-        vkDestroyPipelineLayout(logicalDevice, defaultGraphicsPipelineLayout, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, defaultPipeline.layout, Allocator)
         vkDestroyRenderPass(logicalDevice, renderPass, Allocator)
 
         for(view in swapchainImageViews) {
@@ -1805,9 +1890,9 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Only for use when recording to a command buffer
      */
-    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipeline: VkPipeline = defaultGraphicsPipelineLayout) {
+    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipelineLayout: VkPipeline = defaultPipeline.layout) {
         if(tex != currentTexture) {
-            vkCmdPushConstants(commandBuffer, pipeline, VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
+            vkCmdPushConstants(commandBuffer, pipelineLayout, VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
             currentTexture = tex
         }
     }
