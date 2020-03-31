@@ -1,5 +1,9 @@
 package org.jglrxavpok.engine
 
+import org.joml.Vector2i
+import org.lwjgl.system.MemoryStack
+import org.lwjgl.vulkan.VkExtent2D
+
 typealias VkDebugUtilsMessengerEXT = Long
 typealias VkSurfaceKHR = Long
 typealias VkSwapchainKHR = Long
@@ -31,3 +35,7 @@ typealias VkImageUsageFlags = Int
 typealias VkBufferUsageFlags = Int
 typealias VkMemoryPropertyFlags = Int
 typealias VkPresentModeKHR = Int
+
+fun Vector2i.toExtent(memoryStack: MemoryStack): VkExtent2D {
+    return VkExtent2D.callocStack(memoryStack).set(x(), y())
+}

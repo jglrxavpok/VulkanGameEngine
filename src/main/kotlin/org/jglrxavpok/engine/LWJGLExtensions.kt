@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine
 
 import org.lwjgl.PointerBuffer
+import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.Pointer
 import org.lwjgl.vulkan.EXTDebugReport.*
 import org.lwjgl.vulkan.KHRDisplaySwapchain.*
@@ -33,6 +34,16 @@ fun IntBuffer.it(): Iterable<Int> = (0 until this.remaining()).map { this[it] }
 
 val Boolean.vk: Int
     get() = if(this) VK_TRUE else VK_FALSE
+
+/**
+ * Executes action between push and pop calls.
+ */
+fun <T> MemoryStack.useStack(action: MemoryStack.() -> T): T {
+    push()
+    val result = this.action()
+    pop()
+    return result
+}
 
 /**
  * Checks that this int is VK_SUCCESS or throws an exception with error message corresponding to this Vulkan error code

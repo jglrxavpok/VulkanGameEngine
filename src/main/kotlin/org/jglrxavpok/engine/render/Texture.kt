@@ -11,7 +11,7 @@ import org.lwjgl.vulkan.VkDevice
  * Wrapper around an image+image view pair and the sampler to sample the image.
  * sampler can be reused for other textures
  */
-class Texture(val textureID: Int, private val image: VkImage, val imageView: VkImageView) {
+class Texture(val textureID: Int, private val image: VkImage, val imageView: VkImageView, val source: String? = null) {
 
     /**
      * Releases the image view and the image objects
