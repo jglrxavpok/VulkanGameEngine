@@ -30,6 +30,7 @@ import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_
 import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
 import org.lwjgl.vulkan.VK11.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 import java.nio.LongBuffer
+import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.Semaphore
 
@@ -40,6 +41,8 @@ object VulkanRenderingEngine: IRenderEngine {
 
     val MaxObjects = 256_000
     val MaxTextures = 256
+    val SSAOKernelSize = 16
+
     val EngineName = "jglrEngine"
     val Version = Version(0, 0, 1, "indev")
     val RenderWidth: Int = 1920
@@ -105,18 +108,24 @@ object VulkanRenderingEngine: IRenderEngine {
     private val activeTextures = mutableMapOf<String, Texture>()
     private val activeModels = mutableMapOf<String, Model>()
     lateinit var WhiteTexture: Texture
+    private lateinit var noiseTexture: Texture
 
-    lateinit var defaultShaderDescriptor: DescriptorSet
+    lateinit var gBufferShaderDescriptor: DescriptorSet
+    lateinit var lightingShaderDescriptor: DescriptorSet
+    lateinit var ssaoShaderDescriptor: DescriptorSet
     lateinit var renderToScreenShaderDescriptor: DescriptorSet
     lateinit var emptyDescriptor: DescriptorSet
     private lateinit var uboMemories:  List<VkDeviceMemory>
+    private lateinit var ssaoMemories:  List<VkDeviceMemory>
     private val imageViews = mutableMapOf<Int, VkImageView>()
     private val renderGroups = mutableListOf<RenderGroup>()
     private var textureID = 0
     private var uboID = 0
 
-    lateinit var defaultPipeline: GraphicsPipeline
+    lateinit var gBufferPipeline: GraphicsPipeline
     lateinit var renderToScreenPipeline: GraphicsPipeline
+    lateinit var lightingPipeline: GraphicsPipeline
+    lateinit var ssaoPipeline: GraphicsPipeline
     lateinit var defaultRenderGroup: RenderGroup
 
     /**
@@ -124,7 +133,21 @@ object VulkanRenderingEngine: IRenderEngine {
      */
     lateinit var toScreenGroup: RenderGroup
     private val gColorImages = mutableListOf<ImageInfo>()
+    private val gPosImages = mutableListOf<ImageInfo>()
+    private val gNormalImages = mutableListOf<ImageInfo>()
+    private val lightingOutImages = mutableListOf<ImageInfo>()
+    private val ssaoOutImages = mutableListOf<ImageInfo>()
     private lateinit var screenQuad: Mesh
+    private val ssaoBufferObject = SSAOBufferObject(SSAOKernelSize)
+
+    // Render subpasses
+    private val GBufferSubpass = 0
+    private val LightingSubpass = 1
+    private val SSAOSubpass = 2
+    private val ResolveSubpass = 3
+    // -------
+
+    private val NoiseTextureArrayIndex = 0
 
     /**
      * Initializes the render engine
@@ -181,32 +204,57 @@ object VulkanRenderingEngine: IRenderEngine {
         createCamera()
         createRenderImageViews()
         renderPass = createRenderPass()
-        defaultPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
+        gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
+        lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())
+        ssaoPipeline = createGraphicsPipeline(ssaoPipelineBuilder())
         createCommandPool()
         createDepthResources()
         createFramebuffers()
         linearSampler = createTextureSampler()
         descriptorPool = createDescriptorPool()
 
-        val uboInfo = prepareUniformBuffers()
+        val uboInfo = prepareUniformBuffers(UniformBufferObject.SizeOf)
         uboMemories = uboInfo.second
 
-        defaultShaderDescriptor = createDescriptorSetFromBuilder(
-            defaultPipeline.descriptorSetLayouts[0],
-            DescriptorSetUpdateBuilder().sampler(linearSampler).ubo(uboInfo.first))
+        val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize))
+        val ssaoBuffers = ssaoInfo.first
+        ssaoMemories = ssaoInfo.second
+
+        gBufferShaderDescriptor = createDescriptorSetFromBuilder(
+            gBufferPipeline.descriptorSetLayouts[0],
+            DescriptorSetUpdateBuilder()
+                .sampler(linearSampler)
+                .ubo(uboInfo.first)
+        )
+        lightingShaderDescriptor = createDescriptorSetFromBuilder(
+            lightingPipeline.descriptorSetLayouts[0],
+            DescriptorSetUpdateBuilder()
+                .subpassSampler { index -> gColorImages[index].view }
+                .subpassSampler { index -> gPosImages[index].view }
+                .subpassSampler { index -> gNormalImages[index].view }
+        )
+        noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
+        ssaoShaderDescriptor = createDescriptorSetFromBuilder(
+            ssaoPipeline.descriptorSetLayouts[0],
+            DescriptorSetUpdateBuilder()
+                .frameDependentCombinedImageSampler({ index -> gPosImages[index].view }, linearSampler)
+                .subpassSampler { index -> gNormalImages[index].view }
+                .combinedImageSampler(noiseTexture, linearSampler)
+                .uniformBuffer(SSAOBufferObject.SizeOf(SSAOKernelSize), ssaoBuffers::get, dynamic = false)
+
+        )
         renderToScreenShaderDescriptor = createDescriptorSetFromBuilder(
             renderToScreenPipeline.descriptorSetLayouts[0],
-            DescriptorSetUpdateBuilder().subpassSampler { index -> gColorImages[index].view }
+            DescriptorSetUpdateBuilder()
+                .subpassSampler { index -> lightingOutImages[index].view }
+                .subpassSampler { index -> ssaoOutImages[index].view }
         )
 
         WhiteTexture = createTexture("/textures/white.png")
 
         defaultRenderGroup = object: RenderGroup {
-            override val pipeline get() = defaultPipeline
-        }
-        toScreenGroup = object: RenderGroup {
-            override val pipeline get()= renderToScreenPipeline
+            override val pipeline get() = gBufferPipeline
         }
         renderGroups += defaultRenderGroup
 
@@ -224,23 +272,89 @@ object VulkanRenderingEngine: IRenderEngine {
         initSemaphore.release()
     }
 
-    private fun renderToScreenPipelineBuilder() = GraphicsPipelineBuilder(renderPass, swapchainExtent)
-        .vertexShaderModule("/shaders/gRender.vertc").fragmentShaderModule("/shaders/gRender.fragc")
-        .descriptorSetLayoutBindings(DescriptorSetLayoutBindings().subpassSampler())
+    private fun createNoiseTexture(size: VkExtent2D): Texture {
+        return useStack {
+            val pImage = mallocLong(1)
+            val pImageMemory = mallocLong(1)
+            val pixelBuffer = malloc(size.width()*size.height()*2*4)
+            val pixels = pixelBuffer.asFloatBuffer()
+
+            val rand = Random()
+            for(i in 0 until (pixels.capacity()/2)) {
+                val x = rand.nextFloat() * 2f - 1f
+                val y = rand.nextFloat() * 2f - 1f
+                pixels.put(x).put(y)
+            }
+            pixels.flip()
+
+            uploadTexture(size.width(), size.height(), pixelBuffer, pImage, pImageMemory)
+            val imageView = createImageView(!pImage, VK_FORMAT_R8G8B8A8_SRGB)
+
+            val texture = Texture(NoiseTextureArrayIndex, !pImage, imageView, "generated:noise(${size.width()}x${size.height()})")
+
+            imageViews[texture.textureID] = imageView
+
+            texture
+        }
+    }
+
+    private fun ssaoPipelineBuilder() = GraphicsPipelineBuilder(1, renderPass, swapchainExtent)
+        .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gSSAO.fragc")
+        .descriptorSetLayoutBindings(
+            DescriptorSetLayoutBindings()
+                .combinedImageSampler() // gPos
+                .subpassSampler() // gNormal
+                .combinedImageSampler() // noise
+                .uniformBuffer(false) // projection matrix and noise sample vectors
+        )
         .depthTest(false)
         .depthWrite(false)
-        .subpass(1)
+        .subpass(SSAOSubpass)
         .useStencil(false)
         .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
 
-    private fun gBufferPipelineBuilder(): GraphicsPipelineBuilder {
-        return GraphicsPipelineBuilder(renderPass, swapchainExtent).descriptorSetLayoutBindings(
-            DescriptorSetLayoutBindings().uniformBuffer().textures(MaxTextures).sampler()
+    private fun lightingPipelineBuilder() = GraphicsPipelineBuilder(1, renderPass, swapchainExtent)
+        .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gLighting.fragc")
+        .descriptorSetLayoutBindings(
+            DescriptorSetLayoutBindings()
+                .subpassSampler() // gColor
+                .subpassSampler() // gPos
+                .subpassSampler() // gNormal
+            )
+        .depthTest(false)
+        .depthWrite(false)
+        .subpass(LightingSubpass)
+        .useStencil(false)
+        .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
+
+    private fun renderToScreenPipelineBuilder() = GraphicsPipelineBuilder(1, renderPass, swapchainExtent)
+        .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gResolve.fragc")
+        .descriptorSetLayoutBindings(DescriptorSetLayoutBindings()
+            .subpassSampler() // lighting out
+            .subpassSampler() // ssao out
         )
-    }
+        .depthTest(false)
+        .depthWrite(false)
+        .subpass(ResolveSubpass)
+        .useStencil(false)
+        .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
+
+    private fun gBufferPipelineBuilder() = GraphicsPipelineBuilder(3, renderPass, swapchainExtent)
+        .descriptorSetLayoutBindings(DescriptorSetLayoutBindings()
+            .uniformBuffer(true)
+            .textures(MaxTextures)
+            .sampler()
+        )
+        .subpass(GBufferSubpass)
+        .vertexShaderModule("/shaders/gBuffer.vertc")
+        .fragmentShaderModule("/shaders/gBuffer.fragc")
 
     fun getUBOMemory(frameIndex: Int): VkDeviceMemory {
         return uboMemories[frameIndex]
+    }
+
+    fun getSSAOMemory(frameIndex: Int): VkDeviceMemory {
+        return ssaoMemories[frameIndex]
     }
 
     private fun initVulkanInstance(gameInfo: GameInformation, enableValidationLayers: Boolean) {
@@ -441,17 +555,46 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createRenderPass(): VkRenderPass {
         return useStack {
-            val attachments = VkAttachmentDescription.callocStack(3, this)
-            prepareColorAttachment(attachments.get(0), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-            prepareColorAttachment(attachments.get(1), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            val attachments = VkAttachmentDescription.callocStack(7, this)
+            val finalColorIndex = 0
+            val gColorIndex = 1
+            val gPosIndex = 2
+            val gNormalIndex = 3
+            val lightingOutIndex = 4
+            val ssaoOutIndex = 5
+            val depthIndex = 6
+            // 0: final color
+            // 1: gColor
+            // 2: gPos (world pos)
+            // 3: gNormal
+            // 4: lightingOut
+            // 5: ssaoOut
+            // 6: depth
+            prepareColorAttachment(attachments.get(finalColorIndex), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            prepareColorAttachment(attachments.get(gColorIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            prepareColorAttachment(attachments.get(gPosIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            prepareColorAttachment(attachments.get(gNormalIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            prepareColorAttachment(attachments.get(lightingOutIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            prepareColorAttachment(attachments.get(ssaoOutIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             for(i in swapchainImages.indices) {
-                // VK_FORMAT_R16G16B16A16_SFLOAT for positions
-                val info = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
-                gColorImages += info
+                val gColorInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                gColorImages += gColorInfo
+
+                val gPosInfo = createAttachmentImageView(VK_FORMAT_R16G16B16A16_SFLOAT, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                gPosImages += gPosInfo
+
+                val gNormalInfo = createAttachmentImageView(VK_FORMAT_R16G16B16A16_SFLOAT, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                gNormalImages += gNormalInfo
+
+                val lightingOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                lightingOutImages += lightingOutInfo
+
+                val ssaoOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                ssaoOutImages += ssaoOutInfo
             }
 
-            val depthAttachment = attachments.get(2)
+            val depthAttachment = attachments.get(depthIndex)
             depthAttachment.format(findDepthFormat())
             depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
             depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
@@ -462,41 +605,98 @@ object VulkanRenderingEngine: IRenderEngine {
             depthAttachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 
             val screenBuffer = VkAttachmentReference.callocStack(1, this)
-            screenBuffer.attachment(0)
+            screenBuffer.attachment(finalColorIndex)
             screenBuffer.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
-            val gColorRenderTarget = VkAttachmentReference.callocStack(1, this)
-            gColorRenderTarget.attachment(1)
+            val gBuffer = VkAttachmentReference.callocStack(3, this)
+            val gColorRenderTarget = gBuffer[0]
+            gColorRenderTarget.attachment(gColorIndex)
             gColorRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
+            val gPosRenderTarget = gBuffer[1]
+            gPosRenderTarget.attachment(gPosIndex)
+            gPosRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
+            val gNormalRenderTarget = gBuffer[2]
+            gNormalRenderTarget.attachment(gNormalIndex)
+            gNormalRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
             val depthAttachmentRef = VkAttachmentReference.callocStack(this)
-            depthAttachmentRef.attachment(2)
+            depthAttachmentRef.attachment(depthIndex)
             depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 
             // TODO: Multiple subpass for post-processing
-            val subpasses = VkSubpassDescription.callocStack(2, this)
-            val gBufferPass = subpasses.get(0)
+            val subpasses = VkSubpassDescription.callocStack(4, this)
+            val gBufferPass = subpasses.get(GBufferSubpass)
             gBufferPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
-            gBufferPass.colorAttachmentCount(1)
-            gBufferPass.pColorAttachments(gColorRenderTarget)
+            gBufferPass.colorAttachmentCount(gBuffer.capacity())
+            gBufferPass.pColorAttachments(gBuffer)
             gBufferPass.pDepthStencilAttachment(depthAttachmentRef)
 
-            val gColorInput = VkAttachmentReference.callocStack(1, this)
-            gColorInput.attachment(1)
+            val gBufferInput = VkAttachmentReference.callocStack(3, this)
+            val gColorInput = gBufferInput[0]
+            gColorInput.attachment(gColorIndex)
             gColorInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
-            val renderToScreenPass = subpasses.get(1)
+            val gPosInput = gBufferInput[1]
+            gPosInput.attachment(gColorIndex)
+            gPosInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            val gNormalInput = gBufferInput[2]
+            gNormalInput.attachment(gColorIndex)
+            gNormalInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            val lightingPass = subpasses.get(LightingSubpass)
+            lightingPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
+
+            val lightingOut = VkAttachmentReference.callocStack(1, this)
+            lightingOut.attachment(lightingOutIndex)
+            lightingOut.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
+            lightingPass.pInputAttachments(gBufferInput) // TODO: + shadow maps
+            lightingPass.pColorAttachments(lightingOut)
+            lightingPass.colorAttachmentCount(lightingOut.capacity())
+
+            val ssaoInput = VkAttachmentReference.callocStack(2, this)
+            ssaoInput[0].attachment(gPosIndex)
+            ssaoInput[0].layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            ssaoInput[1].attachment(gNormalIndex)
+            ssaoInput[1].layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            val ssaoPass = subpasses.get(SSAOSubpass)
+            ssaoPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
+
+            val ssaoOut = VkAttachmentReference.callocStack(1, this)
+            ssaoOut.attachment(ssaoOutIndex)
+            ssaoOut.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
+            ssaoPass.pInputAttachments(ssaoInput)
+            ssaoPass.pColorAttachments(ssaoOut)
+            ssaoPass.colorAttachmentCount(ssaoOut.capacity())
+
+
+            val resolveInputs = VkAttachmentReference.callocStack(2, this)
+            resolveInputs[0].attachment(lightingOutIndex)
+            resolveInputs[0].layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            resolveInputs[1].attachment(ssaoOutIndex)
+            resolveInputs[1].layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            val renderToScreenPass = subpasses.get(ResolveSubpass)
             renderToScreenPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
-            renderToScreenPass.colorAttachmentCount(1)
-            renderToScreenPass.pInputAttachments(gColorInput)
+            renderToScreenPass.pInputAttachments(resolveInputs)
             renderToScreenPass.pColorAttachments(screenBuffer)
+            renderToScreenPass.colorAttachmentCount(screenBuffer.capacity())
 
 
-            val dependency = VkSubpassDependency.callocStack(2, this)
-            prepareDependency(dependency.get(0), VK_SUBPASS_EXTERNAL, 0)
-            prepareDependency(dependency.get(1), 0, 1)
+            val dependency = VkSubpassDependency.callocStack(5, this)
+            prepareDependency(dependency.get(GBufferSubpass), VK_SUBPASS_EXTERNAL, GBufferSubpass)
+            prepareDependency(dependency.get(LightingSubpass), GBufferSubpass, LightingSubpass)
+            prepareDependency(dependency.get(SSAOSubpass), GBufferSubpass, SSAOSubpass)
+
+            prepareDependency(dependency.get(3), LightingSubpass, ResolveSubpass)
+            prepareDependency(dependency.get(4), SSAOSubpass, ResolveSubpass)
 
             val renderPassInfo = VkRenderPassCreateInfo.callocStack(this)
             renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO)
@@ -545,9 +745,13 @@ object VulkanRenderingEngine: IRenderEngine {
         val framebuffers = mutableListOf<VkFramebuffer>()
         useStack {
             swapchainImageViews.forEachIndexed { index, it ->
-                val attachments = mallocLong(3)
-                attachments.put(it)
-                attachments.put(gColorImages[index].view)
+                val attachments = mallocLong(7)
+                attachments.put(it) // final color
+                attachments.put(gColorImages[index].view) // gColor
+                attachments.put(gPosImages[index].view) // gPos
+                attachments.put(gNormalImages[index].view) // gNormal
+                attachments.put(lightingOutImages[index].view) // lightingOut
+                attachments.put(ssaoOutImages[index].view) // ssaoOut
                 attachments.put(depthImageView)
                 attachments.rewind()
 
@@ -584,9 +788,9 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Creates the uniform buffers for shaders, one per frame
      */
-    fun prepareUniformBuffers(count: Int = MaxObjects): Pair<List<VkBuffer>, List<VkDeviceMemory>> {
+    fun prepareUniformBuffers(size: Long, count: Int = MaxObjects): Pair<List<VkBuffer>, List<VkDeviceMemory>> {
         return useStack {
-            val bufferSize = UniformBufferObject.SizeOf*count
+            val bufferSize = size*count
             val bufferList = mutableListOf<VkBuffer>()
             val memoryList = mutableListOf<VkDeviceMemory>()
             for (i in swapchainImages.indices) {
@@ -631,20 +835,20 @@ object VulkanRenderingEngine: IRenderEngine {
     fun updateDescriptorSet(descriptorSet: DescriptorSet, builder: DescriptorSetUpdateBuilder) {
         val bindings = builder.bindings
         useStack {
-            val target = VkWriteDescriptorSet.callocStack(bindings.size* swapchainImages.size, this)
-            for(i in swapchainImages.indices) {
-                val targetSet = descriptorSet[i]
+            val targets = VkWriteDescriptorSet.callocStack(bindings.size* swapchainImages.size, this)
+            for(frameIndex in swapchainImages.indices) {
+                val targetSet = descriptorSet[frameIndex]
 
-                for(j in bindings.indices) {
-                    val subtarget = target.get(j* swapchainImages.size+i)
-                    subtarget.sType(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
-                    subtarget.dstSet(targetSet)
+                for(bindingIndex in bindings.indices) {
+                    val target = targets.get(bindingIndex+frameIndex*bindings.size)
+                    target.sType(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
+                    target.dstSet(targetSet)
 
-                    bindings[j].describe(this, subtarget, targetSet, i)
+                    bindings[bindingIndex].describe(this, target, targetSet, frameIndex)
                 }
             }
 
-            vkUpdateDescriptorSets(logicalDevice, target, null)
+            vkUpdateDescriptorSets(logicalDevice, targets, null)
         }
     }
 
@@ -782,30 +986,59 @@ object VulkanRenderingEngine: IRenderEngine {
             val pChannels = mallocInt(1)
             val pixels = STBImage.stbi_load_from_memory(textureDataBuffer, pWidth, pHeight, pChannels, STBImage.STBI_rgb_alpha)
 
-            // create staging buffer
-            val imageSize = !pWidth * !pHeight * 4
-            val pBuffer = mallocLong(1)
-            val pMemory = mallocLong(1)
-            createBuffer(imageSize.toLong(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT or VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, pBuffer, pMemory)
-
-            val ppData = mallocPointer(1)
-            vkMapMemory(logicalDevice, !pMemory, 0, imageSize.toLong(), 0, ppData)
-            memCopy(memAddress(pixels), !ppData, imageSize.toLong())
-            vkUnmapMemory(logicalDevice, !pMemory)
+            uploadTexture(!pWidth, !pHeight, pixels, pImage, pImageMemory)
 
             STBImage.stbi_image_free(pixels)
-
-            createImage(!pWidth, !pHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT, pImage, pImageMemory)
-            val textureImage = !pImage
-            val textureImageMemory = !pImageMemory
-
-            transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-            copyBufferToImage(!pBuffer, textureImage, !pWidth, !pHeight)
-            transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-
-            vkDestroyBuffer(logicalDevice, !pBuffer, Allocator)
-            vkFreeMemory(logicalDevice, !pMemory, Allocator)
         }
+    }
+
+    /**
+     * Creates an image object and uploads the given pixels to it
+     */
+    private fun MemoryStack.uploadTexture(width: Int, height: Int, pixels: ByteBuffer?, pImage: LongBuffer, pImageMemory: LongBuffer) {
+        // create staging buffer
+        val imageSize = width * height * 4
+        val pBuffer = mallocLong(1)
+        val pMemory = mallocLong(1)
+        createBuffer(
+            imageSize.toLong(),
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT or VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            pBuffer,
+            pMemory
+        )
+
+        val ppData = mallocPointer(1)
+        vkMapMemory(logicalDevice, !pMemory, 0, imageSize.toLong(), 0, ppData)
+        memCopy(memAddress(pixels), !ppData, imageSize.toLong())
+        vkUnmapMemory(logicalDevice, !pMemory)
+
+        createImage(
+            width,
+            height,
+            VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            pImage,
+            pImageMemory
+        )
+        val textureImage = !pImage
+
+        transitionImageLayout(
+            textureImage,
+            VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+        )
+        copyBufferToImage(!pBuffer, textureImage, width, height)
+        transitionImageLayout(
+            textureImage,
+            VK_FORMAT_R8G8B8A8_SRGB,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        )
+
+        vkDestroyBuffer(logicalDevice, !pBuffer, Allocator)
+        vkFreeMemory(logicalDevice, !pMemory, Allocator)
     }
 
     private fun copyBufferToImage(buffer: VkBuffer, image: VkImage, width: Int, height: Int) {
@@ -1106,11 +1339,15 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
 
-                    val clearValues = VkClearValue.callocStack(3, this)
+                    val clearValues = VkClearValue.callocStack(7, this)
                     // one per attachment
                     clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
                     clearValues.get(1).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(2).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+                    clearValues.get(2).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(3).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(4).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(5).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(6).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
 
                     val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
                     renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
@@ -1121,42 +1358,61 @@ object VulkanRenderingEngine: IRenderEngine {
                     renderPassInfo.renderArea().extent(swapchainExtent)
                     renderPassInfo.pClearValues(clearValues)
 
+                    // GBuffer Pass
                     vkCmdBeginRenderPass(
                         commandBuffer,
                         renderPassInfo,
                         VK_SUBPASS_CONTENTS_INLINE
                     ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
+
                     scene?.let {
                         // TODO: parallelize?
                         for(group in renderGroups) {
                             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, group.pipeline.handle)
+                            bindTexture(commandBuffer, WhiteTexture, group.pipeline.layout)
 
                             it.recordCommandBuffer(group, commandBuffer, index)
                         }
                     }
 
+                    // Lighting pass
                     vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
+                    simpleQuadPass(commandBuffer, index, lightingPipeline, lightingShaderDescriptor)
 
-                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, toScreenGroup.pipeline.handle)
+                    // SSAO pass
+                    vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
+                    ssaoBufferObject.update(logicalDevice, this, index)
+                    simpleQuadPass(commandBuffer, index, ssaoPipeline, ssaoShaderDescriptor)
 
-                    val pSets = mallocLong(1)
-                    pSets.put(0, renderToScreenShaderDescriptor[index])
-                    vkCmdBindDescriptorSets(
-                        commandBuffer,
-                        VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        renderToScreenPipeline.layout,
-                        0,
-                        pSets,
-                        null
-                    )
-
-                    screenQuad.directRecord(this, commandBuffer)
+                    // Resolve pass
+                    vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
+                    simpleQuadPass(commandBuffer, index, renderToScreenPipeline, renderToScreenShaderDescriptor)
 
                     vkCmdEndRenderPass(commandBuffer)
                     vkEndCommandBuffer(commandBuffer).checkVKErrors()
                 }
             }
+        }
+    }
+
+    private fun simpleQuadPass(commandBuffer: VkCommandBuffer, index: Int, pipeline: GraphicsPipeline, set: DescriptorSet) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle)
+
+        useStack {
+            val pSets = mallocLong(1)
+            pSets.put(0, set[index])
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                pipeline.layout,
+                0,
+                pSets,
+                null
+            )
+
+            // TODO: move to secondary buffer
+            screenQuad.directRecord(this, commandBuffer)
         }
     }
 
@@ -1175,7 +1431,7 @@ object VulkanRenderingEngine: IRenderEngine {
             VK10.vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                defaultPipeline.layout,
+                gBufferPipeline.layout,
                 0,
                 pSets,
                 offsets
@@ -1543,8 +1799,10 @@ object VulkanRenderingEngine: IRenderEngine {
         createRenderImageViews()
         createCamera()
         renderPass = createRenderPass()
-        defaultPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
+        gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
+        lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())
+        ssaoPipeline = createGraphicsPipeline(ssaoPipelineBuilder())
         createDepthResources()
         createFramebuffers()
         descriptorPool = createDescriptorPool()
@@ -1563,7 +1821,7 @@ object VulkanRenderingEngine: IRenderEngine {
         destroyCommandBuffers()
 
         vkDestroyPipeline(logicalDevice, graphicsPipeline, Allocator)
-        vkDestroyPipelineLayout(logicalDevice, defaultPipeline.layout, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, gBufferPipeline.layout, Allocator)
         vkDestroyRenderPass(logicalDevice, renderPass, Allocator)
 
         for(view in swapchainImageViews) {
@@ -1689,7 +1947,9 @@ object VulkanRenderingEngine: IRenderEngine {
         if(textureID >= MaxTextures) {
             error("No more texture space")
         }
-        return textureID++
+        val id = textureID
+        textureID++
+        return id
     }
 
     /**
@@ -1709,8 +1969,9 @@ object VulkanRenderingEngine: IRenderEngine {
             val texture = Texture(nextTextureID(), !pImage, imageView, path)
 
             imageViews[texture.textureID] = imageView
+            println("created texture with ID ${texture.textureID}")
 
-            updateDescriptorSet(defaultShaderDescriptor, DescriptorSetUpdateBuilder().textureSampling(texture))
+            updateDescriptorSet(gBufferShaderDescriptor, DescriptorSetUpdateBuilder().textureSampling(texture))
             activeTextures[path] = texture
 
             texture
@@ -1746,8 +2007,9 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Only for use when recording to a command buffer
      */
-    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipelineLayout: VkPipeline = defaultPipeline.layout) {
+    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipelineLayout: VkPipeline = gBufferPipeline.layout) {
         if(tex != currentTexture) { // send the push constant change only if texture actually changed
+            println("push constant ${tex.textureID}")
             vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
             currentTexture = tex
         }

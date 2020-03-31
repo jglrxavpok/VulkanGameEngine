@@ -1,7 +1,6 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.render.*
-import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
@@ -29,7 +28,7 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
         // TODO: change depending on shader
         val tex = diffuseTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
         VulkanRenderingEngine.bindTexture(commandBuffer, tex)
-        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, uboID, VulkanRenderingEngine.defaultShaderDescriptor)
+        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, uboID, VulkanRenderingEngine.gBufferShaderDescriptor)
     }
 }
 

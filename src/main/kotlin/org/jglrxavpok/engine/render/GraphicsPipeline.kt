@@ -8,7 +8,7 @@ import org.lwjgl.vulkan.*
 /**
  * Allows to define a graphics pipeline
  */
-class GraphicsPipelineBuilder(val renderPass: VkRenderPass, val extent: Vector2i) {
+class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRenderPass, val extent: Vector2i) {
 
     var vertexFormat: VertexFormat = VertexFormat.Companion.Default
     var depthTest = true
@@ -21,7 +21,7 @@ class GraphicsPipelineBuilder(val renderPass: VkRenderPass, val extent: Vector2i
     var fragmentShaderModule: String = "/shaders/default.fragc"
     var fragmentShaderEntryPoint: String = "main"
 
-    constructor(renderPass: VkRenderPass, vkExtent: VkExtent2D): this(renderPass, Vector2i(vkExtent.width(), vkExtent.height()))
+    constructor(attachmentCount: Int, renderPass: VkRenderPass, vkExtent: VkExtent2D): this(attachmentCount, renderPass, Vector2i(vkExtent.width(), vkExtent.height()))
 
     fun vertexShaderModule(path: String): GraphicsPipelineBuilder {
         this.vertexShaderModule = path
@@ -152,22 +152,25 @@ class GraphicsPipelineBuilder(val renderPass: VkRenderPass, val extent: Vector2i
 
             // TODO: Depth&Stencil buffers
 
-            val colorBlendAttachment = VkPipelineColorBlendAttachmentState.callocStack(1, this)
-            colorBlendAttachment.colorWriteMask(VK10.VK_COLOR_COMPONENT_R_BIT or VK10.VK_COLOR_COMPONENT_G_BIT or VK10.VK_COLOR_COMPONENT_B_BIT or VK10.VK_COLOR_COMPONENT_A_BIT)
+            val colorBlendAttachments = VkPipelineColorBlendAttachmentState.callocStack(attachmentCount, this)
+            for (i in 0 until attachmentCount) {
+                val colorBlendAttachment = colorBlendAttachments[i]
+                colorBlendAttachment.colorWriteMask(VK10.VK_COLOR_COMPONENT_R_BIT or VK10.VK_COLOR_COMPONENT_G_BIT or VK10.VK_COLOR_COMPONENT_B_BIT or VK10.VK_COLOR_COMPONENT_A_BIT)
 
-            // configured for alpha blending
-            colorBlendAttachment.blendEnable(true)
-            colorBlendAttachment.srcColorBlendFactor(VK10.VK_BLEND_FACTOR_SRC_ALPHA)
-            colorBlendAttachment.dstColorBlendFactor(VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-            colorBlendAttachment.colorBlendOp(VK10.VK_BLEND_OP_ADD)
-            colorBlendAttachment.srcAlphaBlendFactor(VK10.VK_BLEND_FACTOR_ONE)
-            colorBlendAttachment.dstAlphaBlendFactor(VK10.VK_BLEND_FACTOR_ZERO)
-            colorBlendAttachment.alphaBlendOp(VK10.VK_BLEND_OP_ADD)
+                // configured for alpha blending
+                colorBlendAttachment.blendEnable(true)
+                colorBlendAttachment.srcColorBlendFactor(VK10.VK_BLEND_FACTOR_SRC_ALPHA)
+                colorBlendAttachment.dstColorBlendFactor(VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+                colorBlendAttachment.colorBlendOp(VK10.VK_BLEND_OP_ADD)
+                colorBlendAttachment.srcAlphaBlendFactor(VK10.VK_BLEND_FACTOR_ONE)
+                colorBlendAttachment.dstAlphaBlendFactor(VK10.VK_BLEND_FACTOR_ZERO)
+                colorBlendAttachment.alphaBlendOp(VK10.VK_BLEND_OP_ADD)
+            }
 
             val colorBlending = VkPipelineColorBlendStateCreateInfo.callocStack(this)
             colorBlending.sType(VK10.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO)
             colorBlending.logicOpEnable(false)
-            colorBlending.pAttachments(colorBlendAttachment)
+            colorBlending.pAttachments(colorBlendAttachments)
 
             // TODO: Dynamic state goes here
 

@@ -1,5 +1,6 @@
 package org.jglrxavpok.engine.render
 
+import org.jglrxavpok.engine.VkPipelineStageFlags
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding
 import org.lwjgl.vulkan.VK10.*
@@ -31,8 +32,8 @@ class DescriptorSetLayoutBindings {
         return this
     }
 
-    fun uniformBuffer(): DescriptorSetLayoutBindings {
-        bind(Binding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1, VK_SHADER_STAGE_VERTEX_BIT))
+    fun uniformBuffer(dynamic: Boolean): DescriptorSetLayoutBindings {
+        bind(Binding(if(dynamic) VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC else VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT))
         return this
     }
 
@@ -46,8 +47,14 @@ class DescriptorSetLayoutBindings {
         return this
     }
 
+    fun combinedImageSampler(): DescriptorSetLayoutBindings {
+        bind(Binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT))
+        return this
+    }
+
     fun subpassSampler(): DescriptorSetLayoutBindings {
         bind(Binding(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1, VK_SHADER_STAGE_FRAGMENT_BIT))
         return this
     }
+
 }

@@ -39,6 +39,7 @@ interface Descriptor {
 class DescriptorSetUpdateBuilder {
     // TODO: selectable binding index
 
+    private var currentIndex = 0
     internal val bindings = mutableListOf<Binding>()
 
     /**
@@ -64,7 +65,7 @@ class DescriptorSetUpdateBuilder {
             imageInfo.sampler(0)
 
             target.dstBinding(1) // binding for our texture
-            target.dstArrayElement(texture.textureID) // 0 because we are not writing to an array
+            target.dstArrayElement(texture.textureID) // we are writing to an array
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
             target.pImageInfo(imageInfo)
@@ -89,6 +90,24 @@ class DescriptorSetUpdateBuilder {
         }
     }
 
+    /**
+     * Uniform Buffer Object Binding
+     */
+    data class UniformBufferBinding(val bindingIndex: Int, val size: Long, val buffers: (Int) -> VkBuffer, val dynamic: Boolean): Binding {
+        override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
+            val bufferInfo = VkDescriptorBufferInfo.callocStack(1, stack)
+            bufferInfo.buffer(buffers(frameIndex))
+            bufferInfo.offset(0)
+            bufferInfo.range(size)
+
+            target.dstBinding(bindingIndex) // binding for our UBO
+            target.dstArrayElement(0) // 0 because we are not writing to an array
+
+            target.descriptorType(if(dynamic) VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC else VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+            target.pBufferInfo(bufferInfo)
+        }
+    }
+
     data class SamplerBinding(val sampler: VkSampler): Binding {
         override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val imageInfo = VkDescriptorImageInfo.callocStack(1, stack)
@@ -105,17 +124,32 @@ class DescriptorSetUpdateBuilder {
     /**
      * frame index -> VkImageView
      */
-    class SubpassSamplerBinding(val samplerView: (Int) -> VkImageView): Binding {
+    class SubpassSamplerBinding(val bindingIndex: Int, val samplerView: (Int) -> VkImageView): Binding {
         override fun describe(memoryStack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val imageInfo = VkDescriptorImageInfo.callocStack(1, memoryStack)
             imageInfo.imageView(samplerView(frameIndex))
             imageInfo.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             imageInfo.sampler(VK_NULL_HANDLE)
 
-            target.dstBinding(0) // binding for our sampler
+            target.dstBinding(bindingIndex) // binding for our sampler
             target.dstArrayElement(0)
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT)
+            target.pImageInfo(imageInfo)
+        }
+    }
+
+    class FrameDependentCombinedImageSamplerBinding(val bindingIndex: Int, val views: (Int) -> VkImageView, val sampler: VkSampler): Binding {
+        override fun describe(memoryStack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
+            val imageInfo = VkDescriptorImageInfo.callocStack(1, memoryStack)
+            imageInfo.imageView(views(frameIndex))
+            imageInfo.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            imageInfo.sampler(sampler)
+
+            target.dstBinding(bindingIndex) // binding for our sampler
+            target.dstArrayElement(0)
+
+            target.descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
             target.pImageInfo(imageInfo)
         }
     }
@@ -131,8 +165,14 @@ class DescriptorSetUpdateBuilder {
     /**
      * Adds a new ubo binding
      */
+    // TODO: merge with uniformBuffer()
     fun ubo(buffers: List<VkBuffer>): DescriptorSetUpdateBuilder {
         bindings += UBOBinding(buffers)
+        return this
+    }
+
+    fun uniformBuffer(size: Long, buffers: (Int) -> VkBuffer, dynamic: Boolean): DescriptorSetUpdateBuilder {
+        bindings += UniformBufferBinding(nextBindingIndex(), size, buffers, dynamic)
         return this
     }
 
@@ -145,7 +185,19 @@ class DescriptorSetUpdateBuilder {
     }
 
     fun subpassSampler(samplerViews: (Int) -> VkImageView): DescriptorSetUpdateBuilder {
-        bindings += SubpassSamplerBinding(samplerViews)
+        bindings += SubpassSamplerBinding(nextBindingIndex(), samplerViews)
         return this
     }
+
+    fun frameDependentCombinedImageSampler(samplerViews: (Int) -> VkImageView, sampler: VkSampler): DescriptorSetUpdateBuilder {
+        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), samplerViews, sampler)
+        return this
+    }
+
+    fun combinedImageSampler(texture: Texture, sampler: VkSampler): DescriptorSetUpdateBuilder {
+        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), { _ -> texture.imageView }, sampler)
+        return this
+    }
+
+    private fun nextBindingIndex() = currentIndex++
 }
