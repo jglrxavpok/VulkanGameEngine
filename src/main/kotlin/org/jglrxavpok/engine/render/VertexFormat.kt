@@ -14,7 +14,7 @@ abstract class VertexFormat {
 
     companion object {
         object Default: VertexFormat() {
-            override val size = 8* sizeof<Float>()
+            override val size = 11* sizeof<Float>()
 
             override fun callocBindingDescription(stack: MemoryStack): VkVertexInputBindingDescription.Buffer {
                 val bindingDescription = VkVertexInputBindingDescription.callocStack(1, stack)
@@ -25,7 +25,7 @@ abstract class VertexFormat {
             }
 
             override fun callocAttributeDescriptions(stack: MemoryStack): VkVertexInputAttributeDescription.Buffer {
-                val descriptions = VkVertexInputAttributeDescription.callocStack(3, stack)
+                val descriptions = VkVertexInputAttributeDescription.callocStack(4, stack)
                 descriptions[0].binding(0)
                 descriptions[0].location(0) // pos
                 descriptions[0].format(VK10.VK_FORMAT_R32G32B32_SFLOAT)
@@ -41,6 +41,12 @@ abstract class VertexFormat {
                 descriptions[2].format(VK10.VK_FORMAT_R32G32_SFLOAT)
                 descriptions[2].offset(6* sizeof<Float>())
 
+                descriptions[3].binding(0)
+                descriptions[3].location(3) // normal
+                descriptions[3].format(VK10.VK_FORMAT_R32G32B32_SFLOAT)
+                descriptions[3].offset(6* sizeof<Float>())
+
+
                 return descriptions
             }
 
@@ -53,6 +59,9 @@ abstract class VertexFormat {
                 buffer.put(vertex.color.z())
                 buffer.put(vertex.texCoords.x())
                 buffer.put(vertex.texCoords.y())
+                buffer.put(vertex.normal.x())
+                buffer.put(vertex.normal.y())
+                buffer.put(vertex.normal.z())
             }
         }
 
@@ -75,7 +84,7 @@ abstract class VertexFormat {
                 val descriptions = VkVertexInputAttributeDescription.callocStack(1, stack)
                 descriptions[0].binding(0)
                 descriptions[0].location(0) // pos
-                descriptions[0].format(VK10.VK_FORMAT_R32G32B32_SFLOAT)
+                descriptions[0].format(VK10.VK_FORMAT_R32G32_SFLOAT)
                 descriptions[0].offset(0)
 
                 return descriptions

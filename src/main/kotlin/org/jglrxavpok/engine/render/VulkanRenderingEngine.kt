@@ -77,6 +77,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private var descriptorPool: VkDescriptorPool = -1
 
     internal var linearSampler: VkSampler = -1
+    internal var nearestSampler: VkSampler = -1
 
     private var depthImage: VkImage = -1
     private var depthImageMemory: VkDeviceMemory = -1
@@ -211,7 +212,8 @@ object VulkanRenderingEngine: IRenderEngine {
         createCommandPool()
         createDepthResources()
         createFramebuffers()
-        linearSampler = createTextureSampler()
+        linearSampler = createTextureSampler(VK_FILTER_LINEAR)
+        nearestSampler = createTextureSampler(VK_FILTER_NEAREST)
         descriptorPool = createDescriptorPool()
 
         val uboInfo = prepareUniformBuffers(UniformBufferObject.SizeOf)
@@ -220,6 +222,26 @@ object VulkanRenderingEngine: IRenderEngine {
         val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize))
         val ssaoBuffers = ssaoInfo.first
         ssaoMemories = ssaoInfo.second
+
+        val rand = Random()
+        for(i in 0 until SSAOKernelSize) {
+            val x = rand.nextFloat() * 2f - 1f
+            val y = rand.nextFloat() * 2f - 1f
+            val z = rand.nextFloat()
+            val sample = Vector3f(x,y,z)
+            sample.normalize()
+            sample.mul(rand.nextFloat())
+            var scale = i.toFloat() / SSAOKernelSize.toFloat()
+            scale = LinearEase(0.1f, 1.0f, scale*scale)
+            sample.mul(scale)
+            ssaoBufferObject.noiseSamples[i].set(sample)
+        }
+
+        useStack {
+            for(i in swapchainImages.indices) {
+                ssaoBufferObject.update(logicalDevice, this, i)
+            }
+        }
 
         gBufferShaderDescriptor = createDescriptorSetFromBuilder(
             gBufferPipeline.descriptorSetLayouts[0],
@@ -239,8 +261,8 @@ object VulkanRenderingEngine: IRenderEngine {
             ssaoPipeline.descriptorSetLayouts[0],
             DescriptorSetUpdateBuilder()
                 .frameDependentCombinedImageSampler({ index -> gPosImages[index].view }, linearSampler)
-                .subpassSampler { index -> gNormalImages[index].view }
-                .combinedImageSampler(noiseTexture, linearSampler)
+                .frameDependentCombinedImageSampler({ index -> gNormalImages[index].view }, nearestSampler)
+                .combinedImageSampler(noiseTexture, nearestSampler)
                 .uniformBuffer(SSAOBufferObject.SizeOf(SSAOKernelSize), ssaoBuffers::get, dynamic = false)
 
         )
@@ -276,14 +298,14 @@ object VulkanRenderingEngine: IRenderEngine {
         return useStack {
             val pImage = mallocLong(1)
             val pImageMemory = mallocLong(1)
-            val pixelBuffer = malloc(size.width()*size.height()*2*4)
+            val pixelBuffer = malloc(size.width()*size.height()*4*4)
             val pixels = pixelBuffer.asFloatBuffer()
 
             val rand = Random()
-            for(i in 0 until (pixels.capacity()/2)) {
+            for(i in 0 until size.width()*size.height()) {
                 val x = rand.nextFloat() * 2f - 1f
                 val y = rand.nextFloat() * 2f - 1f
-                pixels.put(x).put(y)
+                pixels.put(x).put(y).put(0f).put(0f)
             }
             pixels.flip()
 
@@ -305,7 +327,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 .combinedImageSampler() // gPos
                 .subpassSampler() // gNormal
                 .combinedImageSampler() // noise
-                .uniformBuffer(false) // projection matrix and noise sample vectors
+                .uniformBuffer(false, stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT) // projection matrix and noise sample vectors
         )
         .depthTest(false)
         .depthWrite(false)
@@ -575,7 +597,7 @@ object VulkanRenderingEngine: IRenderEngine {
             prepareColorAttachment(attachments.get(gPosIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(gNormalIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(lightingOutIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-            prepareColorAttachment(attachments.get(ssaoOutIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            prepareColorAttachment(attachments.get(ssaoOutIndex), VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             for(i in swapchainImages.indices) {
                 val gColorInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
@@ -590,7 +612,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 val lightingOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
                 lightingOutImages += lightingOutInfo
 
-                val ssaoOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                val ssaoOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
                 ssaoOutImages += ssaoOutInfo
             }
 
@@ -630,8 +652,8 @@ object VulkanRenderingEngine: IRenderEngine {
             val gBufferPass = subpasses.get(GBufferSubpass)
             gBufferPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
-            gBufferPass.colorAttachmentCount(gBuffer.capacity())
             gBufferPass.pColorAttachments(gBuffer)
+            gBufferPass.colorAttachmentCount(3)
             gBufferPass.pDepthStencilAttachment(depthAttachmentRef)
 
             val gBufferInput = VkAttachmentReference.callocStack(3, this)
@@ -656,7 +678,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             lightingPass.pInputAttachments(gBufferInput) // TODO: + shadow maps
             lightingPass.pColorAttachments(lightingOut)
-            lightingPass.colorAttachmentCount(lightingOut.capacity())
+            lightingPass.colorAttachmentCount(1)
 
             val ssaoInput = VkAttachmentReference.callocStack(2, this)
             ssaoInput[0].attachment(gPosIndex)
@@ -673,7 +695,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             ssaoPass.pInputAttachments(ssaoInput)
             ssaoPass.pColorAttachments(ssaoOut)
-            ssaoPass.colorAttachmentCount(ssaoOut.capacity())
+            ssaoPass.colorAttachmentCount(1)
 
 
             val resolveInputs = VkAttachmentReference.callocStack(2, this)
@@ -687,7 +709,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             renderToScreenPass.pInputAttachments(resolveInputs)
             renderToScreenPass.pColorAttachments(screenBuffer)
-            renderToScreenPass.colorAttachmentCount(screenBuffer.capacity())
+            renderToScreenPass.colorAttachmentCount(1)
 
 
             val dependency = VkSubpassDependency.callocStack(5, this)
@@ -715,10 +737,12 @@ object VulkanRenderingEngine: IRenderEngine {
         dependency.dstSubpass(to)
 
         dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-        dependency.srcAccessMask(0)
+        dependency.srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
 
         dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-        dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT or VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+        dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+
+        dependency.dependencyFlags(VK_DEPENDENCY_BY_REGION_BIT)
     }
 
     private fun prepareColorAttachment(description: VkAttachmentDescription, format: Int, initialLayout: VkImageLayout, finalLayout: VkImageLayout, loadOp: Int = VK_ATTACHMENT_LOAD_OP_CLEAR) {
@@ -910,12 +934,6 @@ object VulkanRenderingEngine: IRenderEngine {
                 error("Failed to create texture sampler")
             }
             !pSampler
-        }
-    }
-
-    private fun createTextureImageView(textureImage: VkImage): VkImageView {
-        return useStack {
-            createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB)
         }
     }
 
@@ -1341,12 +1359,12 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     val clearValues = VkClearValue.callocStack(7, this)
                     // one per attachment
-                    clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(1).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(2).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(3).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(4).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
-                    clearValues.get(5).color(VkClearColorValue.callocStack(this).float32(floats(0.5f, 0.5f, 0.5f, 1f)))
+                    clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
+                    clearValues.get(1).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
+                    clearValues.get(2).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
+                    clearValues.get(3).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
+                    clearValues.get(4).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
+                    clearValues.get(5).color(VkClearColorValue.callocStack(this).float32(floats(1f, 1f, 1f, 1f)))
                     clearValues.get(6).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
 
                     val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
@@ -1382,7 +1400,6 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     // SSAO pass
                     vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
-                    ssaoBufferObject.update(logicalDevice, this, index)
                     simpleQuadPass(commandBuffer, index, ssaoPipeline, ssaoShaderDescriptor)
 
                     // Resolve pass
@@ -1736,6 +1753,13 @@ object VulkanRenderingEngine: IRenderEngine {
         if(scene != null) {
             scene!!.preRenderFrame(frameIndex)
         }
+
+        useStack {
+            // TODO: customize camera
+            ssaoBufferObject.proj.set(defaultCamera.projection)
+            ssaoBufferObject.proj.m11(ssaoBufferObject.proj.m11() * -1f)
+            ssaoBufferObject.update(logicalDevice, this, frameIndex)
+        }
     }
 
     private fun MemoryStack.graphicsQueueSubmit(imageIndex: Int, currentFrame: Int) {
@@ -2009,7 +2033,6 @@ object VulkanRenderingEngine: IRenderEngine {
      */
     internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipelineLayout: VkPipeline = gBufferPipeline.layout) {
         if(tex != currentTexture) { // send the push constant change only if texture actually changed
-            println("push constant ${tex.textureID}")
             vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
             currentTexture = tex
         }

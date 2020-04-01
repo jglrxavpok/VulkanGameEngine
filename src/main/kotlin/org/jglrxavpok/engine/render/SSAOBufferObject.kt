@@ -12,29 +12,28 @@ import org.lwjgl.vulkan.VK10.vkFlushMappedMemoryRanges
 import org.lwjgl.vulkan.VkDevice
 import org.lwjgl.vulkan.VkMappedMemoryRange
 import java.nio.ByteBuffer
-import kotlin.math.log
 
 /**
  * Uniform Buffer Objects are used to pass variables to shaders without changing the rendering pipeline
  */
-class SSAOBufferObject(val kernelSize: Int): ShaderResource(), Descriptor {
+class SSAOBufferObject(val sampleCount: Int): ShaderResource(), Descriptor {
 
     // TODO: Split into samples and projection matrix buffers
 
     companion object {
-        fun SizeOf(kernelSize: Int) = (sizeof<Matrix4f>() + sizeof<Vector2f>() * kernelSize).toLong()
+        fun SizeOf(sampleCount: Int) = (sizeof<Matrix4f>() + sizeof<Vector3f>() * sampleCount).toLong()
     }
 
-    val sizeOf = SizeOf(kernelSize)
+    val sizeOf = SizeOf(sampleCount)
     val proj = Matrix4f()
-    val noiseSamples = Array(kernelSize) { Vector2f() }
+    val noiseSamples = Array(sampleCount) { Vector3f() }
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
         proj.get(buffer)
         buffer.skip(16*4)
         for(sample in noiseSamples) {
             sample.get(buffer)
-            buffer.skip(2*4)
+            buffer.skip(3*4)
         }
         return buffer
     }
@@ -44,7 +43,7 @@ class SSAOBufferObject(val kernelSize: Int): ShaderResource(), Descriptor {
         from.skip(16*4)
         for(sample in noiseSamples) {
             sample.set(from)
-            from.skip(2*4)
+            from.skip(3*4)
         }
         return this
     }

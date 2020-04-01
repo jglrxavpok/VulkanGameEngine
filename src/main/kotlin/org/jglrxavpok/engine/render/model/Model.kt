@@ -127,10 +127,12 @@ class Model {
 
         val hasColor = mesh.mColors(0) != null
         val hasTexCoords = mesh.mTextureCoords(0) != null
+        val hasNormals = mesh.mNormals() != null
         for(vertexIndex in 0 until mesh.mNumVertices()) {
             val pos = mesh.mVertices().get(vertexIndex)
             val colorInfo = if(hasColor) mesh.mColors(0)!![vertexIndex] else null
             val texInfo = if(hasTexCoords) mesh.mTextureCoords(0)!![vertexIndex] else null
+            val normalInfo = if(hasNormals) mesh.mNormals()!![vertexIndex] else null
 
             val color = if(colorInfo != null) {
                 Vector3f(colorInfo.r(), colorInfo.g(), colorInfo.b()) // TODO: support alpha
@@ -145,11 +147,18 @@ class Model {
                 Vector2f(0f, 0f)
             }
 
+            val normal = if(normalInfo != null) {
+                Vector3f(normalInfo.x(), normalInfo.y(), normalInfo.z())
+            } else {
+                Vector3f()
+            }
+
             // TODO: process normals
             val vertex = Vertex(
                 Vector3f(pos.x(), pos.y(), pos.z()),
                 color,
-                texCoords
+                texCoords,
+                normal
             )
             vertices += vertex
         }

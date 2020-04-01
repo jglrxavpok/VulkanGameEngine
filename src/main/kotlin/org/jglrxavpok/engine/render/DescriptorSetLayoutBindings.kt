@@ -32,8 +32,8 @@ class DescriptorSetLayoutBindings {
         return this
     }
 
-    fun uniformBuffer(dynamic: Boolean): DescriptorSetLayoutBindings {
-        bind(Binding(if(dynamic) VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC else VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT))
+    fun uniformBuffer(dynamic: Boolean, stageFlags: Int = VK_SHADER_STAGE_VERTEX_BIT): DescriptorSetLayoutBindings {
+        bind(Binding(if(dynamic) VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC else VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stageFlags))
         return this
     }
 
