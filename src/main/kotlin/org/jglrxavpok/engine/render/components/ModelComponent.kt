@@ -13,9 +13,10 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * Entity rendering component.
  * Used to render a given model at the location of the entity
  */
-class ModelComponent(val path: String, group: RenderGroup = VulkanRenderingEngine.defaultRenderGroup, val camera: Camera = VulkanRenderingEngine.defaultCamera): RenderingComponent {
+class ModelComponent(val path: String, group: RenderGroup = VulkanRenderingEngine.defaultRenderGroup, val camera: Camera = VulkanRenderingEngine.defaultCamera, castsShadows: Boolean = true): RenderingComponent {
 
     override val renderGroup: RenderGroup = group
+    override val castsShadows: Boolean = castsShadows
     val model: Model by VulkanRenderingEngine.load({ Model.Empty }) { VulkanRenderingEngine.createModel(path) }
     val localTransform = Matrix4f().identity()
 

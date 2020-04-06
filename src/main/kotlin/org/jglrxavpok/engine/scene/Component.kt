@@ -16,6 +16,7 @@ interface Component {
  */
 interface RenderingComponent: Component {
     val renderGroup: RenderGroup
+    val castsShadows: Boolean
 
     /**
      * Prepares the rendering of this component to the given buffer
