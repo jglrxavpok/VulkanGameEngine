@@ -48,36 +48,9 @@ class SSAOBufferObject(val sampleCount: Int): ShaderResource(), Descriptor {
         return this
     }
 
-    /**
-     * Writes this UBO to the correct memory, depending on the frame in flight index
-     */
-    fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
-        val bufferSize = sizeOf
-        val ppData = stack.mallocPointer(1)
-        val data = write(stack.malloc(bufferSize.toInt()))
-        val memory = VulkanRenderingEngine.getSSAOMemory(frameIndex)
-        VK10.vkMapMemory(
-            logicalDevice,
-            memory,
-            0,
-            bufferSize,
-            0,
-            ppData
-        )
-        data.position(0)
-        MemoryUtil.memCopy(MemoryUtil.memAddress(data), !ppData, bufferSize)
-
-        val memoryRange = VkMappedMemoryRange.callocStack(stack);
-        memoryRange.sType(VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE)
-        memoryRange.memory(memory)
-        memoryRange.offset(0)
-        memoryRange.size(sizeOf)
-        vkFlushMappedMemoryRanges(logicalDevice, memoryRange)
-
-        VK10.vkUnmapMemory(
-            logicalDevice,
-            VulkanRenderingEngine.getSSAOMemory(frameIndex)
-        )
+    override fun getMemory(frameIndex: Int): VkDeviceMemory {
+        return VulkanRenderingEngine.getSSAOMemory(frameIndex)
     }
 
+    override fun sizeOf() = sizeOf
 }

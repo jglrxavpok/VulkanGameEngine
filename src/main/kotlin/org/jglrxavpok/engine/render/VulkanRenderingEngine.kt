@@ -5,6 +5,7 @@ import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
 import org.jglrxavpok.engine.render.lighting.DummyLight
 import org.jglrxavpok.engine.render.lighting.Light
+import org.jglrxavpok.engine.render.lighting.LightBufferObject
 import org.jglrxavpok.engine.render.lighting.LightType
 import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.Model
@@ -45,6 +46,7 @@ object VulkanRenderingEngine: IRenderEngine {
     val MaxObjects = 256_000
     val MaxTextures = 256
     val SSAOKernelSize = 16
+    val MaxLights = 32
     val MaxShadowCastingLights = 16
 
     val EngineName = "jglrEngine"
@@ -124,6 +126,7 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var emptyDescriptor: DescriptorSet
     private lateinit var uboMemories:  List<VkDeviceMemory>
     private lateinit var ssaoMemories:  List<VkDeviceMemory>
+    private lateinit var lightMemories:  List<VkDeviceMemory>
     private val imageViews = mutableMapOf<Int, VkImageView>()
     private val renderGroups = mutableListOf<RenderGroup>()
     private var textureID = 0
@@ -147,6 +150,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val ssaoOutImages = mutableListOf<ImageInfo>()
     private lateinit var screenQuad: Mesh
     private val ssaoBufferObject = SSAOBufferObject(SSAOKernelSize)
+    private val lightBufferObject = LightBufferObject(MaxLights)
 
     /**
      * shadowMap[lightIndex][frameIndex]
@@ -219,8 +223,8 @@ object VulkanRenderingEngine: IRenderEngine {
         createSwapchain()
         createCamera()
         createRenderImageViews()
-        usualRenderPass = createRenderPass()
         shadowMapRenderPass = createShadowPass(findDepthFormat())
+        usualRenderPass = createRenderPass()
         gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
         lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())
@@ -236,9 +240,13 @@ object VulkanRenderingEngine: IRenderEngine {
         val uboInfo = prepareUniformBuffers(UniformBufferObject.SizeOf)
         uboMemories = uboInfo.second
 
-        val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize))
+        val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize), 1)
         val ssaoBuffers = ssaoInfo.first
         ssaoMemories = ssaoInfo.second
+
+        val lightInfo = prepareUniformBuffers(LightBufferObject.SizeOf(MaxLights), 1)
+        val lightBuffers = lightInfo.first
+        lightMemories = lightInfo.second
 
         val rand = Random()
         for(i in 0 until SSAOKernelSize) {
@@ -272,6 +280,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 .subpassSampler { index -> gColorImages[index].view }
                 .subpassSampler { index -> gPosImages[index].view }
                 .subpassSampler { index -> gNormalImages[index].view }
+                .uniformBuffer(LightBufferObject.SizeOf(MaxLights), { index -> lightBuffers[index] }, false)
         )
         noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
         ssaoShaderDescriptor = createDescriptorSetFromBuilder(
@@ -375,6 +384,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 .subpassSampler() // gColor
                 .subpassSampler() // gPos
                 .subpassSampler() // gNormal
+                .uniformBuffer(false, stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT) // lights
             )
         .depthTest(false)
         .depthWrite(false)
@@ -419,6 +429,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
     fun getSSAOMemory(frameIndex: Int): VkDeviceMemory {
         return ssaoMemories[frameIndex]
+    }
+
+    fun getLightMemory(frameIndex: Int): VkDeviceMemory {
+        return lightMemories[frameIndex]
     }
 
     private fun initVulkanInstance(gameInfo: GameInformation, enableValidationLayers: Boolean) {
@@ -751,11 +765,11 @@ object VulkanRenderingEngine: IRenderEngine {
             gColorInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             val gPosInput = gBufferInput[1]
-            gPosInput.attachment(gColorIndex)
+            gPosInput.attachment(gPosIndex)
             gPosInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             val gNormalInput = gBufferInput[2]
-            gNormalInput.attachment(gColorIndex)
+            gNormalInput.attachment(gNormalIndex)
             gNormalInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             val lightingPass = subpasses.get(LightingSubpass)
@@ -828,8 +842,8 @@ object VulkanRenderingEngine: IRenderEngine {
         dependency.srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
         dependency.srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT)
 
-        dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-        dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+        dependency.dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT or VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+        dependency.dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT or VK_ACCESS_INPUT_ATTACHMENT_READ_BIT)
 
         dependency.dependencyFlags(VK_DEPENDENCY_BY_REGION_BIT)
     }
@@ -1858,15 +1872,15 @@ object VulkanRenderingEngine: IRenderEngine {
 
         val direction by lazy { Vector3f() }
         if (strafe != 0f || forward != 0f) {
-            direction.set(-strafe, -forward, 0f)
-            direction/*.normalize()*/.rotateAxis(defaultCamera.yaw, 0f, 0f, 1f)
+            direction.set(-strafe, 0f, forward)
+            direction/*.normalize()*/.rotateAxis(defaultCamera.yaw, 0f, 1f, 0f)
             val speed = 0.01f
             direction.mul(speed)
             defaultCamera.position.add(direction)
         }
 
         if(scene != null) {
-            scene!!.preRenderFrame(frameIndex)
+            scene!!.preRenderFrame(frameIndex, lightBufferObject)
         }
 
         useStack {
@@ -1874,6 +1888,8 @@ object VulkanRenderingEngine: IRenderEngine {
             ssaoBufferObject.proj.set(defaultCamera.projection)
             ssaoBufferObject.proj.m11(ssaoBufferObject.proj.m11() * -1f)
             ssaoBufferObject.update(logicalDevice, this, frameIndex)
+
+            lightBufferObject.update(logicalDevice, this, frameIndex)
         }
     }
 
@@ -1937,8 +1953,8 @@ object VulkanRenderingEngine: IRenderEngine {
         createSwapchain()
         createRenderImageViews()
         createCamera()
-        usualRenderPass = createRenderPass()
         shadowMapRenderPass = createShadowPass(findDepthFormat())
+        usualRenderPass = createRenderPass()
         gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
         lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())

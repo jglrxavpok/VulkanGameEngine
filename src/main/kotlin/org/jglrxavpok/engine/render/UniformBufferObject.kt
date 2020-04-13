@@ -48,14 +48,20 @@ class UniformBufferObject(val uboID: Int): ShaderResource(), Descriptor {
         return this
     }
 
+    override fun getMemory(frameIndex: Int): VkDeviceMemory {
+        return VulkanRenderingEngine.getUBOMemory(frameIndex)
+    }
+
+    override fun sizeOf() = SizeOf
+
     /**
      * Writes this UBO to the correct memory, depending on the frame in flight index
      */
-    fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
+    override fun update(logicalDevice: VkDevice, stack: MemoryStack, frameIndex: Int) {
         val bufferSize = SizeOf
         val ppData = stack.mallocPointer(1)
         val data = write(stack.malloc(bufferSize.toInt()))
-        val memory = VulkanRenderingEngine.getUBOMemory(frameIndex)
+        val memory = getMemory(frameIndex)
         VK10.vkMapMemory(
             logicalDevice,
             memory,
@@ -76,7 +82,7 @@ class UniformBufferObject(val uboID: Int): ShaderResource(), Descriptor {
 
         VK10.vkUnmapMemory(
             logicalDevice,
-            VulkanRenderingEngine.getUBOMemory(frameIndex)
+            memory
         )
     }
 

@@ -44,7 +44,7 @@ abstract class VertexFormat {
                 descriptions[3].binding(0)
                 descriptions[3].location(3) // normal
                 descriptions[3].format(VK10.VK_FORMAT_R32G32B32_SFLOAT)
-                descriptions[3].offset(6* sizeof<Float>())
+                descriptions[3].offset(8* sizeof<Float>())
 
 
                 return descriptions

@@ -2,6 +2,8 @@ package org.jglrxavpok.engine.scene
 
 import org.jglrxavpok.engine.render.RenderGroup
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
+import org.jglrxavpok.engine.render.lighting.Light
+import org.jglrxavpok.engine.render.lighting.LightBufferObject
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.util.*
 
@@ -18,6 +20,7 @@ class Scene {
     private var isRenderingDirty: Boolean = false
 
     private val elements = LinkedList<Element>()
+    private val lights = LinkedList<Light>()
 
     fun addElement(element: Element) {
         synchronized(elements) {
@@ -53,10 +56,16 @@ class Scene {
         }
     }
 
-    fun preRenderFrame(frameIndex: Int) {
+    fun preRenderFrame(frameIndex: Int, lightBufferObject: LightBufferObject) {
         synchronized(elements) {
             elements.forEach {
                 it.preFrameRender(frameIndex)
+            }
+        }
+        synchronized(lights) {
+            lightBufferObject.viewMatrix.set(VulkanRenderingEngine.defaultCamera.view)
+            lights.forEachIndexed { index, light ->
+                lightBufferObject.lights[index] = light // TODO: range check
             }
         }
     }
@@ -69,6 +78,13 @@ class Scene {
         synchronized(futureActions) {
             futureActions.add(function)
         }
+    }
+
+    fun addLight(light: Light) {
+        synchronized(lights) {
+            lights += light
+        }
+        // TODO: shadow casting lights
     }
 
 }

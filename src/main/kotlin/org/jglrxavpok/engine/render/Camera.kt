@@ -11,16 +11,16 @@ import org.joml.Vector3fc
 class Camera(aspectRatio: Float) {
 
     companion object {
-        val UpAxis = Vector3f(0f, 0f, 1f)
+        val UpAxis = Vector3f(0f, 1f, 0f)
         val AxisY = Vector3f(0f, 1f, 0f)
+        val AxisZ = Vector3f(0f, 0f, 1f)
     }
 
     constructor(swapchainWidth: Int, swapchainHeight: Int): this(swapchainWidth.toFloat() / swapchainHeight)
 
-    private val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 0f, 1f))
-    private val renderView = Matrix4f(view)
+    internal val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 1f, 0f))
     val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), aspectRatio, 0.01f, 10000000f)
-    val forward: Vector3fc get()= view.transformDirection(AxisY, Vector3f())
+    val forward: Vector3fc get()= Vector3f().set(-view.m02(), -view.m12(), -view.m22())
 
     val position = Vector3f()
     var pitch = 0f
@@ -32,14 +32,10 @@ class Camera(aspectRatio: Float) {
      */
     fun updateUBO(ubo: UniformBufferObject) {
         val rot by lazy { Quaternionf() }
-        rot.identity().rotateY(roll).rotateX(-pitch).rotateZ(-yaw).conjugate()
+        rot.identity().rotateY(yaw).rotateX(pitch).rotateZ(roll).conjugate()
         view.identity().rotate(rot).translate(-position.x(), -position.y(), -position.z())
 
-        // no idea why renderView and view matrices are not the same
-        rot.identity().rotateZ(yaw).rotateX((pitch+Math.PI/2f).toFloat()).rotateY(roll).conjugate()
-        renderView.identity().rotate(rot).translate(-position.x(), -position.y(), -position.z())
-
-        ubo.view.set(renderView)
+        ubo.view.set(view)
         ubo.proj.set(projection)
 
         ubo.proj.m11(ubo.proj.m11() * -1) // invert Y Axis (OpenGL -> Vulkan translation)
