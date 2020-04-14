@@ -3,10 +3,7 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
-import org.jglrxavpok.engine.render.lighting.DummyLight
-import org.jglrxavpok.engine.render.lighting.Light
-import org.jglrxavpok.engine.render.lighting.LightBufferObject
-import org.jglrxavpok.engine.render.lighting.LightType
+import org.jglrxavpok.engine.render.lighting.*
 import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.Model
 import org.joml.Vector3f
@@ -46,7 +43,7 @@ object VulkanRenderingEngine: IRenderEngine {
     val MaxObjects = 256_000
     val MaxTextures = 256
     val SSAOKernelSize = 16
-    val MaxLights = 32
+    val MaxLights = LightingConfiguration(pointLightCount = 32, directionalLightCount = 32, spotLightCount = 32)
     val MaxShadowCastingLights = 16
 
     val EngineName = "jglrEngine"
@@ -158,7 +155,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val shadowMaps = Array(MaxShadowCastingLights) {
         mutableListOf<ImageInfo>()
     }
-    private val shadowCastingLights: Array<Light> = Array(MaxShadowCastingLights) { DummyLight() }
+    private val shadowCastingLights: Array<Light> = Array(MaxShadowCastingLights) { SpotLight.None }
 
     // Render subpasses
     private val GBufferSubpass = 0
@@ -2169,5 +2166,9 @@ object VulkanRenderingEngine: IRenderEngine {
             vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
             currentTexture = tex
         }
+    }
+
+    fun setLights(lights: List<Light>) {
+        lightBufferObject.setLights(lights)
     }
 }

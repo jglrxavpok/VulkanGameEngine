@@ -5,50 +5,37 @@ import org.jglrxavpok.engine.render.Descriptor
 import org.jglrxavpok.engine.render.ShaderResource
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Matrix4f
-import org.joml.Vector3f
-import org.joml.Vector4f
 import java.nio.ByteBuffer
 
 /**
  * Uniform Buffer Objects are used to pass variables to shaders without changing the rendering pipeline
  */
-class LightBufferObject(val lightCount: Int): ShaderResource(), Descriptor {
+class LightBufferObject(val lightingConfiguration: LightingConfiguration): ShaderResource(), Descriptor {
 
     companion object {
-        fun SizeOf(lightCount: Int) = (sizeof<Vector3f>() /*view position*/ + sizeof<Float>()/*padding*/ + (sizeof<Int>()/*type*/ + sizeof<Float>()*3/*padding*/ + sizeof<Vector3f>() /*position*/ + sizeof<Float>()/*padding*/ + sizeof<Vector3f>() /*direction*/ + sizeof<Float>()/*padding*/ + sizeof<Vector3f>() /*color*/ + sizeof<Float>()/*padding*/ + sizeof<Float>() /*intensity*/ + sizeof<Float>()*3/*padding*/) * lightCount).toLong()
+        fun SizeOf(lightingConfiguration: LightingConfiguration): Long =
+            (
+                    +lightingConfiguration.directionalLightCount * DirectionalLight.SizeOf
+                    +lightingConfiguration.pointLightCount * PointLight.SizeOf
+                    +lightingConfiguration.spotLightCount * SpotLight.SizeOf
+            ).toLong()
     }
 
-    val sizeOf = SizeOf(lightCount)
-    val lights = Array<Light>(lightCount) { DummyLight() }
+    val sizeOf = SizeOf(lightingConfiguration)
     val viewMatrix = Matrix4f().identity()
+    private val pointLights = Array<PointLight>(lightingConfiguration.pointLightCount) { PointLight.None }
+    private val spotLights = Array<SpotLight>(lightingConfiguration.spotLightCount) { SpotLight.None }
+    private val directionalLights = Array<DirectionalLight>(lightingConfiguration.directionalLightCount) { DirectionalLight.None }
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
-        val tmp by lazy { Vector3f() }
-        for(light in lights) {
-            buffer.putInt(light.type.ordinal)
-            buffer.putFloat(-1f) // padding
-            buffer.putFloat(-1f) // padding
-            buffer.putFloat(-1f) // padding
+        for (light in pointLights) {
+            light.write(buffer, viewMatrix)
         }
-        for(light in lights) {
-            viewMatrix.transformPosition(light.position, tmp)
-            tmp.get(buffer)
-            buffer.skip(3*4)
-            buffer.putFloat(-1f) // padding
+        for (light in spotLights) {
+            light.write(buffer, viewMatrix)
         }
-        for(light in lights) {
-            viewMatrix.transformDirection(light.direction, tmp)
-            tmp.get(buffer)
-            buffer.skip(3*4)
-            buffer.putFloat(-1f) // padding
-        }
-        for(light in lights) {
-            light.color.get(buffer)
-            buffer.skip(3*4)
-            buffer.putFloat(-1f) // padding
-        }
-        for(light in lights) {
-            buffer.putFloat(light.intensity)
+        for (light in directionalLights) {
+            light.write(buffer, viewMatrix)
         }
         return buffer
     }
@@ -62,4 +49,20 @@ class LightBufferObject(val lightCount: Int): ShaderResource(), Descriptor {
     }
 
     override fun sizeOf() = sizeOf
+
+    fun setLights(lights: List<Light>) {
+        var pointCursor = 0
+        var spotCursor = 0
+        var directionalCursor = 0
+
+        // TODO: range check
+        lights.forEach {
+            when(it) {
+                is SpotLight -> spotLights[spotCursor++] = it
+                is DirectionalLight -> directionalLights[directionalCursor++] = it
+                is PointLight -> pointLights[pointCursor++] = it
+                else -> error("Unsupported light type: $it")
+            }
+        }
+    }
 }

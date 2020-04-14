@@ -26,6 +26,6 @@ void main() {
     fragColor = inColor;
     fragTexCoord = inTexCoords;
     fragWorldPos = worldPos.xyz;
-    fragViewNormal = normalize(mat3(modelview) * inNormal);
+    fragViewNormal = normalize((transpose(inverse(modelview)) * vec4(inNormal, 0.0)).xyz);
     fragViewPos = (ubo.view * worldPos).xyz;
 }

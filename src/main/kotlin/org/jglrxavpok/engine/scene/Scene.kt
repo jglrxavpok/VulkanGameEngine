@@ -57,15 +57,10 @@ class Scene {
     }
 
     fun preRenderFrame(frameIndex: Int, lightBufferObject: LightBufferObject) {
+        lightBufferObject.viewMatrix.set(VulkanRenderingEngine.defaultCamera.view)
         synchronized(elements) {
             elements.forEach {
                 it.preFrameRender(frameIndex)
-            }
-        }
-        synchronized(lights) {
-            lightBufferObject.viewMatrix.set(VulkanRenderingEngine.defaultCamera.view)
-            lights.forEachIndexed { index, light ->
-                lightBufferObject.lights[index] = light // TODO: range check
             }
         }
     }
@@ -83,6 +78,7 @@ class Scene {
     fun addLight(light: Light) {
         synchronized(lights) {
             lights += light
+            VulkanRenderingEngine.setLights(lights)
         }
         // TODO: shadow casting lights
     }
