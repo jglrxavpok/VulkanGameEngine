@@ -18,7 +18,7 @@ class Camera(aspectRatio: Float) {
 
     constructor(swapchainWidth: Int, swapchainHeight: Int): this(swapchainWidth.toFloat() / swapchainHeight)
 
-    internal val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 1f, 0f))
+    val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 1f, 0f))
     val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), aspectRatio, 0.01f, 10000000f)
     val forward: Vector3fc get()= Vector3f().set(-view.m02(), -view.m12(), -view.m22())
 

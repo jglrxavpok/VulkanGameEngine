@@ -27,6 +27,9 @@ struct SpotLight {
     vec3 viewDirection;
     vec3 color;
     float intensity;
+    float attenuationConstant;
+    float attenuationLinear;
+    float attenuationQuadratic;
 };
 
 layout(binding = 3) uniform LightBuffer {

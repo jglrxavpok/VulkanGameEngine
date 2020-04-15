@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.scene
 
 import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.render.Camera.Companion.AxisZ
 import org.jglrxavpok.engine.render.RenderGroup
 import org.joml.Quaternionf
 import org.joml.Vector3f
@@ -16,6 +17,8 @@ open class Element {
     val rotation = Quaternionf()
     private val renderingComponents = mutableListOf<RenderingComponent>()
     private val updateComponents = mutableListOf<LogicComponent>()
+
+    val forward get() = rotation.transform(AxisZ, Vector3f())
 
     open fun tick(dt: Float) = synchronized(updateComponents) {
         updateComponents.forEach {
@@ -53,5 +56,7 @@ open class Element {
             it.preFrameRender(this, frameIndex)
         }
     }
+
+    open fun onAdded(scene: Scene) { }
 
 }

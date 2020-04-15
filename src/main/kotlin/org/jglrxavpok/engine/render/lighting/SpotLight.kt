@@ -14,6 +14,10 @@ open class SpotLight: Light(), PositionableLight {
     open val direction = Vector3f().set(1f)
     open var angle = Math.PI/2f
 
+    var attenuationConstant = 1f
+    var attenuationLinear = 1f
+    var attenuationQuadratic = 1f
+
     override fun write(buffer: ByteBuffer, viewMatrix: Matrix4f) {
         val tmp by lazy { Vector3f() }
         // put direction in view-space, as every computation is done in that space
@@ -30,6 +34,12 @@ open class SpotLight: Light(), PositionableLight {
         color.get(buffer)
         buffer.skip(sizeof<Vector3f>())
         buffer.putFloat(intensity)
+
+        buffer.putFloat(attenuationConstant)
+        buffer.putFloat(attenuationLinear)
+        buffer.putFloat(attenuationQuadratic)
+
+        buffer.putFloat(-1f) // padding
     }
 
     object None: SpotLight() {
@@ -51,6 +61,8 @@ open class SpotLight: Light(), PositionableLight {
             sizeof<Vector3f>() + // direction
             sizeof<Float>() + // padding
             sizeof<Vector3f>() + // color
-            sizeof<Float>() // intensity
+            sizeof<Float>() + // intensity
+            3*sizeof<Float>() +// attenuation model
+            sizeof<Float>() // padding
     }
 }

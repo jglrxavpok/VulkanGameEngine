@@ -55,7 +55,8 @@ object VulkanRenderingEngine: IRenderEngine {
     val Allocator: VkAllocationCallbacks? = null
 
     private var enableValidationLayers: Boolean = true
-    private var windowPointer: Long = -1L
+    var windowPointer: Long = -1L
+        private set
     private var framebufferResized = false
     private val maxFramesInFlight = 3
 
@@ -281,6 +282,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 .subpassSampler { index -> gPosImages[index].view }
                 .subpassSampler { index -> gNormalImages[index].view }
                 .uniformBuffer(LightBufferObject.SizeOf(MaxLights), { index -> lightBuffers[index] }, false)
+                .subpassSampler { index -> gSpecularImages[index].view }
         )
         noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
         ssaoShaderDescriptor = createDescriptorSetFromBuilder(
@@ -386,6 +388,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 .subpassSampler() // gPos
                 .subpassSampler() // gNormal
                 .uniformBuffer(false, stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT) // lights
+                .subpassSampler() // gSpecular
             )
         .depthTest(false)
         .depthWrite(false)

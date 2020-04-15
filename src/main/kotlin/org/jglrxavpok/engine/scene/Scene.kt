@@ -27,6 +27,7 @@ class Scene {
     fun addElement(element: Element) {
         synchronized(elements) {
             elements.add(element)
+            element.onAdded(this)
             isRenderingDirty = true
         }
     }
