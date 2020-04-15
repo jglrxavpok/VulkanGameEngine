@@ -6,10 +6,10 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import java.nio.ByteBuffer
 
-open class PointLight: Light() {
+open class PointLight: Light(), PositionableLight {
     override val type = LightType.Point
 
-    open val position = Vector3f().set(0f)
+    override val position = Vector3f().set(0f)
     open val color = Vector3f().set(1f)
 
     var attenuationConstant = 1f

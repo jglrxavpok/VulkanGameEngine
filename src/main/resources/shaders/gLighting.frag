@@ -10,8 +10,6 @@ layout(input_attachment_index = 2, binding = 2) uniform subpassInput gNormal;
 
 layout(location = 0) out vec4 outColor;
 
-float ambientLighting = 0.1f; // TODO: don't hardcode
-
 float exposure(vec3 fragNormal, vec3 lightDirection) {
     return max(dot(-fragNormal, lightDirection), 0.0);
 }
@@ -21,7 +19,7 @@ void main() {
     vec3 fragNormal = subpassLoad(gNormal).xyz;
     vec3 color = subpassLoad(gColor).rgb;
 
-    vec3 lighting = color * ambientLighting;
+    vec3 lighting = color * lights.ambientLight.color;
     for(int i = 0; i < MAX_POINT_LIGHTS; i++) {
         PointLight light = lights.pointLights[i];
 

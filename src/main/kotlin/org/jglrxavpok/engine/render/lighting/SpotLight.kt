@@ -6,10 +6,10 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import java.nio.ByteBuffer
 
-open class SpotLight: Light() {
+open class SpotLight: Light(), PositionableLight {
     override val type = LightType.Spot
 
-    open val position = Vector3f().set(0f)
+    override val position = Vector3f().set(0f)
     open val color = Vector3f().set(1f)
     open val direction = Vector3f().set(1f)
     open var angle = Math.PI/2f

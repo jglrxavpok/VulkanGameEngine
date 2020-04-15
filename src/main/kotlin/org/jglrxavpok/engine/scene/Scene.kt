@@ -4,6 +4,7 @@ import org.jglrxavpok.engine.render.RenderGroup
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.render.lighting.Light
 import org.jglrxavpok.engine.render.lighting.LightBufferObject
+import org.joml.Vector3f
 import org.lwjgl.vulkan.VkCommandBuffer
 import java.util.*
 
@@ -21,6 +22,7 @@ class Scene {
 
     private val elements = LinkedList<Element>()
     private val lights = LinkedList<Light>()
+    val ambientLighting = Vector3f(0f)
 
     fun addElement(element: Element) {
         synchronized(elements) {
@@ -58,6 +60,7 @@ class Scene {
 
     fun preRenderFrame(frameIndex: Int, lightBufferObject: LightBufferObject) {
         lightBufferObject.viewMatrix.set(VulkanRenderingEngine.defaultCamera.view)
+        lightBufferObject.ambientLighting.set(ambientLighting)
         synchronized(elements) {
             elements.forEach {
                 it.preFrameRender(frameIndex)

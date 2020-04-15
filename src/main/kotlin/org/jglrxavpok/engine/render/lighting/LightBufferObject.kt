@@ -5,6 +5,7 @@ import org.jglrxavpok.engine.render.Descriptor
 import org.jglrxavpok.engine.render.ShaderResource
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Matrix4f
+import org.joml.Vector3f
 import java.nio.ByteBuffer
 
 /**
@@ -15,6 +16,7 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
     companion object {
         fun SizeOf(lightingConfiguration: LightingConfiguration): Long =
             (
+                    +4* sizeof<Float>() // ambient light
                     +lightingConfiguration.directionalLightCount * DirectionalLight.SizeOf
                     +lightingConfiguration.pointLightCount * PointLight.SizeOf
                     +lightingConfiguration.spotLightCount * SpotLight.SizeOf
@@ -26,8 +28,13 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
     private val pointLights = Array<PointLight>(lightingConfiguration.pointLightCount) { PointLight.None }
     private val spotLights = Array<SpotLight>(lightingConfiguration.spotLightCount) { SpotLight.None }
     private val directionalLights = Array<DirectionalLight>(lightingConfiguration.directionalLightCount) { DirectionalLight.None }
+    val ambientLighting = Vector3f(0f)
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
+        buffer.putFloat(ambientLighting.x())
+        buffer.putFloat(ambientLighting.y())
+        buffer.putFloat(ambientLighting.z())
+        buffer.putFloat(1f) // padding
         for (light in pointLights) {
             light.write(buffer, viewMatrix)
         }
