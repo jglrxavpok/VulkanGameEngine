@@ -56,7 +56,7 @@ class DescriptorSetUpdateBuilder {
     /**
      * Texture binding
      */
-    class TextureBinding(val texture: Texture): Binding {
+    class TextureBinding(val texture: Texture, val bindingIndex: Int): Binding {
         override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val imageInfo = VkDescriptorImageInfo.callocStack(1, stack)
 
@@ -64,7 +64,7 @@ class DescriptorSetUpdateBuilder {
             imageInfo.imageView(texture.imageView)
             imageInfo.sampler(0)
 
-            target.dstBinding(1) // binding for our texture
+            target.dstBinding(bindingIndex) // binding for our texture
             target.dstArrayElement(texture.textureID) // we are writing to an array
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
@@ -157,8 +157,8 @@ class DescriptorSetUpdateBuilder {
     /**
      * Adds a new texture binding
      */
-    fun textureSampling(texture: Texture): DescriptorSetUpdateBuilder {
-        bindings += TextureBinding(texture)
+    fun textureSampling(texture: Texture, bindingIndex: Int): DescriptorSetUpdateBuilder {
+        bindings += TextureBinding(texture, bindingIndex)
         return this
     }
 

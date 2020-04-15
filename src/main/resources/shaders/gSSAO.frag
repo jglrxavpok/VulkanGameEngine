@@ -9,7 +9,7 @@ layout(location = 0) in vec2 fragPos;
 layout(location = 1) in vec2 fragCoords;
 
 layout(binding = 0) uniform sampler2D gPos;
-layout(binding = 1) uniform sampler2D gNormal;
+layout(input_attachment_index = 2, binding = 1) uniform subpassInput gNormal;
 layout(binding = 2) uniform sampler2D noise;
 
 layout(binding = 3) uniform SSAOBufferObject {
@@ -24,7 +24,7 @@ void main() {
     vec3 fragViewPos   = texture(gPos, coords).xyz;
 
     // Gram-Schmidt process: create an orthogonal basis
-    vec3 normal    = -normalize(texture(gNormal, coords).xyz);
+    vec3 normal    = -normalize(subpassLoad(gNormal).xyz);
     vec3 randomVec = normalize(texture(noise, coords*noiseScale).xyz);
     vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);

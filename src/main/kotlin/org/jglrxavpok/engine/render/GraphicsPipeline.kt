@@ -179,9 +179,9 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
 
             // TODO: Customizable
             val pushConstants = VkPushConstantRange.callocStack(1, this)
-            pushConstants.stageFlags(VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
-            pushConstants.offset(0)
-            pushConstants.size(VulkanRenderingEngine.MaxTextures)
+            pushConstants[0].stageFlags(VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
+            pushConstants[0].offset(0)
+            pushConstants[0].size(4*2)
             pipelineLayoutInfo.pPushConstantRanges(pushConstants)
 
             val bindings = descriptorSetLayoutBindings.calloc(this)

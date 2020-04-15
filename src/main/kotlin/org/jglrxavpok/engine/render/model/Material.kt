@@ -6,9 +6,9 @@ import org.lwjgl.vulkan.VkCommandBuffer
 /**
  * Represents a material (eg textures, lighting, etc.)
  */
-class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
+class Material(val diffuseTexture: TextureDescriptor?, val specularTexture: TextureDescriptor?): Descriptor {
     companion object {
-        val None = Material(null)
+        val None = Material(null, null)
     }
 
     /**
@@ -27,7 +27,9 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
     fun prepareDescriptors(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, uboID: Int) {
         // TODO: change depending on shader
         val tex = diffuseTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
-        VulkanRenderingEngine.bindTexture(commandBuffer, tex)
+        val specular = specularTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
+        VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Diffuse, tex)
+        VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Specular, specular)
         VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, uboID, VulkanRenderingEngine.gBufferShaderDescriptor)
     }
 }
@@ -38,12 +40,21 @@ class Material(val diffuseTexture: TextureDescriptor?): Descriptor {
 class MaterialBuilder {
 
     private var diffuseTexture: TextureDescriptor? = null
+    private var specularTexture: TextureDescriptor? = null
 
     /**
      * Sets the diffuse texture to use for this material
      */
-    fun diffuseTexture(texture: TextureDescriptor): MaterialBuilder {
-        diffuseTexture = texture
+    fun diffuseTexture(path: String): MaterialBuilder {
+        diffuseTexture = TextureDescriptor(path, TextureUsage.Diffuse)
+        return this
+    }
+
+    /**
+     * Sets the specular texture to use for this material
+     */
+    fun specularTexture(path: String): MaterialBuilder {
+        specularTexture = TextureDescriptor(path, TextureUsage.Specular)
         return this
     }
 
@@ -51,7 +62,7 @@ class MaterialBuilder {
      * Creates the material with the properties given during building
      */
     fun build(): Material {
-        return Material(diffuseTexture = diffuseTexture)
+        return Material(diffuseTexture = diffuseTexture, specularTexture = specularTexture)
     }
 
 }
@@ -60,7 +71,13 @@ class MaterialBuilder {
  * Represents a texture inside a material
  */
 data class TextureDescriptor(val path: String, val usage: TextureUsage) {
-    val texture by VulkanRenderingEngine.load({ VulkanRenderingEngine.WhiteTexture }) { VulkanRenderingEngine.createTexture(path) }
+    val texture by VulkanRenderingEngine.load({
+        when(usage) {
+            TextureUsage.Specular -> VulkanRenderingEngine.BlackSpecularTexture
+            else -> VulkanRenderingEngine.WhiteTexture
+        }
+
+    }) { VulkanRenderingEngine.createTexture(path, usage) }
 }
 
 /**
@@ -69,5 +86,6 @@ data class TextureDescriptor(val path: String, val usage: TextureUsage) {
 enum class TextureUsage {
     None,
     Diffuse,
+    Specular,
     // TODO
 }

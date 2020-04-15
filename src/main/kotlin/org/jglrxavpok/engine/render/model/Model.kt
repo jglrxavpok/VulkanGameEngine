@@ -1,7 +1,6 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.io.AssimpFileSystem
-import org.jglrxavpok.engine.render.UniformBufferObject
 import org.jglrxavpok.engine.render.Vertex
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Vector2f
@@ -80,14 +79,26 @@ class Model {
             val material = AIMaterial.create(materialAddress)
 
             val builder = MaterialBuilder()
-            val count = Assimp.aiGetMaterialTextureCount(material, Assimp.aiTextureType_DIFFUSE)
-            if(count > 0) { // TODO: support for multiple textures
+            val diffuseCount = Assimp.aiGetMaterialTextureCount(material, Assimp.aiTextureType_DIFFUSE)
+            if(diffuseCount > 0) { // TODO: support for multiple textures
                 val path = AIString.malloc()
 
                 // add only if texture is present
                 if(Assimp.aiGetMaterialTexture(material, Assimp.aiTextureType_DIFFUSE, 0, path, null as? IntArray, null, null, null, null, null) == 0) {
                     val pathString = "/${path.dataString()}"
-                    builder.diffuseTexture(TextureDescriptor(pathString, TextureUsage.Diffuse))
+                    builder.diffuseTexture(pathString)
+                }
+                path.free()
+            }
+
+            val specularCount = Assimp.aiGetMaterialTextureCount(material, Assimp.aiTextureType_SPECULAR)
+            if(specularCount > 0) { // TODO: support for multiple textures
+                val path = AIString.malloc()
+
+                // add only if texture is present
+                if(Assimp.aiGetMaterialTexture(material, Assimp.aiTextureType_SPECULAR, 0, path, null as? IntArray, null, null, null, null, null) == 0) {
+                    val pathString = "/${path.dataString()}"
+                    builder.specularTexture(pathString)
                 }
                 path.free()
             }
@@ -98,7 +109,10 @@ class Model {
         VulkanRenderingEngine.load({ Material.None }) {
             materials.forEach {
                 it.diffuseTexture?.let { descriptor ->
-                    VulkanRenderingEngine.createTexture(descriptor.path)
+                    VulkanRenderingEngine.createTexture(descriptor.path, descriptor.usage)
+                }
+                it.specularTexture?.let { descriptor ->
+                    VulkanRenderingEngine.createTexture(descriptor.path, descriptor.usage)
                 }
             }
         }

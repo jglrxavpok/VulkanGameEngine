@@ -6,6 +6,7 @@ import org.jglrxavpok.engine.*
 import org.jglrxavpok.engine.render.lighting.*
 import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.Model
+import org.jglrxavpok.engine.render.model.TextureUsage
 import org.joml.Vector3f
 import org.lwjgl.PointerBuffer
 import org.lwjgl.glfw.GLFW.*
@@ -26,6 +27,7 @@ import org.lwjgl.vulkan.KHRSurface.*
 import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
 import org.jglrxavpok.engine.scene.Scene
+import org.lwjgl.assimp.Assimp
 import org.lwjgl.stb.STBImage
 import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
 import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
@@ -76,7 +78,6 @@ object VulkanRenderingEngine: IRenderEngine {
     private var swapchainPresentMode: VkPresentModeKHR = -1
     private var usualRenderPass: VkRenderPass = -1
     private var shadowMapRenderPass: VkRenderPass = -1
-    private var graphicsPipeline: VkPipeline = -1
     private var commandPool: VkCommandPool = -1
     private var descriptorPool: VkDescriptorPool = -1
 
@@ -114,6 +115,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val activeTextures = mutableMapOf<String, Texture>()
     private val activeModels = mutableMapOf<String, Model>()
     lateinit var WhiteTexture: Texture
+    lateinit var BlackSpecularTexture: Texture
     private lateinit var noiseTexture: Texture
 
     lateinit var gBufferShaderDescriptor: DescriptorSet
@@ -124,10 +126,10 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var uboMemories:  List<VkDeviceMemory>
     private lateinit var ssaoMemories:  List<VkDeviceMemory>
     private lateinit var lightMemories:  List<VkDeviceMemory>
-    private val imageViews = mutableMapOf<Int, VkImageView>()
+    private val imageViews = Array(TextureUsage.values().size) { mutableMapOf<Int, VkImageView>() }
     private val renderGroups = mutableListOf<RenderGroup>()
-    private var textureID = 0
     private var uboID = 0
+    private val textureCounters = IntArray(TextureUsage.values().size)
 
     lateinit var gBufferPipeline: GraphicsPipeline
     lateinit var renderToScreenPipeline: GraphicsPipeline
@@ -143,6 +145,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val gColorImages = mutableListOf<ImageInfo>()
     private val gPosImages = mutableListOf<ImageInfo>()
     private val gNormalImages = mutableListOf<ImageInfo>()
+    private val gSpecularImages = mutableListOf<ImageInfo>()
     private val lightingOutImages = mutableListOf<ImageInfo>()
     private val ssaoOutImages = mutableListOf<ImageInfo>()
     private lateinit var screenQuad: Mesh
@@ -284,7 +287,7 @@ object VulkanRenderingEngine: IRenderEngine {
             ssaoPipeline.descriptorSetLayouts[0],
             DescriptorSetUpdateBuilder()
                 .frameDependentCombinedImageSampler({ index -> gPosImages[index].view }, linearSampler)
-                .frameDependentCombinedImageSampler({ index -> gNormalImages[index].view }, nearestSampler)
+                .subpassSampler { index -> gNormalImages[index].view } //.frameDependentCombinedImageSampler({ index -> gNormalImages[index].view }, nearestSampler)
                 .combinedImageSampler(noiseTexture, nearestSampler)
                 .uniformBuffer(SSAOBufferObject.SizeOf(SSAOKernelSize), ssaoBuffers::get, dynamic = false)
 
@@ -297,6 +300,7 @@ object VulkanRenderingEngine: IRenderEngine {
         )
 
         WhiteTexture = createTexture("/textures/white.png")
+        BlackSpecularTexture = createTexture("/textures/black.png", TextureUsage.Specular)
 
         defaultRenderGroup = object: RenderGroup {
             override val pipeline get() = gBufferPipeline
@@ -353,7 +357,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val texture = Texture(NoiseTextureArrayIndex, !pImage, imageView, "generated:noise(${size.width()}x${size.height()})")
 
-            imageViews[texture.textureID] = imageView
+            imageViews[TextureUsage.Diffuse.ordinal][texture.textureID] = imageView
 
             texture
         }
@@ -401,11 +405,12 @@ object VulkanRenderingEngine: IRenderEngine {
         .useStencil(false)
         .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
 
-    private fun gBufferPipelineBuilder() = GraphicsPipelineBuilder(3, usualRenderPass, swapchainExtent)
+    private fun gBufferPipelineBuilder() = GraphicsPipelineBuilder(4, usualRenderPass, swapchainExtent)
         .descriptorSetLayoutBindings(DescriptorSetLayoutBindings()
             .uniformBuffer(true)
-            .textures(MaxTextures)
+            .textures(MaxTextures) // diffuse
             .sampler()
+            .textures(MaxTextures) // specular
         )
         .subpass(GBufferSubpass)
         .vertexShaderModule("/shaders/gBuffer.vertc")
@@ -677,7 +682,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun createRenderPass(): VkRenderPass {
         return useStack {
-            val attachments = VkAttachmentDescription.callocStack(7, this)
+            val attachments = VkAttachmentDescription.callocStack(8, this)
             val finalColorIndex = 0
             val gColorIndex = 1
             val gPosIndex = 2
@@ -685,6 +690,7 @@ object VulkanRenderingEngine: IRenderEngine {
             val lightingOutIndex = 4
             val ssaoOutIndex = 5
             val depthIndex = 6
+            val gSpecularIndex = 7
             // 0: final color
             // 1: gColor
             // 2: gPos (world pos)
@@ -692,12 +698,15 @@ object VulkanRenderingEngine: IRenderEngine {
             // 4: lightingOut
             // 5: ssaoOut
             // 6: depth
+            // 7: specular
             prepareColorAttachment(attachments.get(finalColorIndex), swapchainFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
             prepareColorAttachment(attachments.get(gColorIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(gPosIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(gNormalIndex), VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(lightingOutIndex), VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
             prepareColorAttachment(attachments.get(ssaoOutIndex), VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            prepareColorAttachment(attachments.get(gSpecularIndex), VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             for(i in swapchainImages.indices) {
                 val gColorInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
@@ -714,6 +723,9 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 val ssaoOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
                 ssaoOutImages += ssaoOutInfo
+
+                val gSpecularInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                gSpecularImages += gSpecularInfo
             }
 
             val depthAttachment = attachments.get(depthIndex)
@@ -730,7 +742,7 @@ object VulkanRenderingEngine: IRenderEngine {
             screenBuffer.attachment(finalColorIndex)
             screenBuffer.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
-            val gBuffer = VkAttachmentReference.callocStack(3, this)
+            val gBuffer = VkAttachmentReference.callocStack(4, this)
             val gColorRenderTarget = gBuffer[0]
             gColorRenderTarget.attachment(gColorIndex)
             gColorRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
@@ -743,6 +755,10 @@ object VulkanRenderingEngine: IRenderEngine {
             gNormalRenderTarget.attachment(gNormalIndex)
             gNormalRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
 
+            val gSpecularRenderTarget = gBuffer[3]
+            gSpecularRenderTarget.attachment(gSpecularIndex)
+            gSpecularRenderTarget.layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+
             val depthAttachmentRef = VkAttachmentReference.callocStack(this)
             depthAttachmentRef.attachment(depthIndex)
             depthAttachmentRef.layout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -753,10 +769,10 @@ object VulkanRenderingEngine: IRenderEngine {
             gBufferPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
 
             gBufferPass.pColorAttachments(gBuffer)
-            gBufferPass.colorAttachmentCount(3)
+            gBufferPass.colorAttachmentCount(4)
             gBufferPass.pDepthStencilAttachment(depthAttachmentRef)
 
-            val gBufferInput = VkAttachmentReference.callocStack(3, this)
+            val gBufferInput = VkAttachmentReference.callocStack(4, this)
             val gColorInput = gBufferInput[0]
             gColorInput.attachment(gColorIndex)
             gColorInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
@@ -768,6 +784,10 @@ object VulkanRenderingEngine: IRenderEngine {
             val gNormalInput = gBufferInput[2]
             gNormalInput.attachment(gNormalIndex)
             gNormalInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+
+            val gSpecularInput = gBufferInput[3]
+            gSpecularInput.attachment(gSpecularIndex)
+            gSpecularInput.layout(VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 
             val lightingPass = subpasses.get(LightingSubpass)
             lightingPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
@@ -895,7 +915,7 @@ object VulkanRenderingEngine: IRenderEngine {
         val framebuffers = mutableListOf<VkFramebuffer>()
         useStack {
             swapchainImageViews.forEachIndexed { index, it ->
-                val attachments = mallocLong(7)
+                val attachments = mallocLong(8)
                 attachments.put(it) // final color
                 attachments.put(gColorImages[index].view) // gColor
                 attachments.put(gPosImages[index].view) // gPos
@@ -903,6 +923,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 attachments.put(lightingOutImages[index].view) // lightingOut
                 attachments.put(ssaoOutImages[index].view) // ssaoOut
                 attachments.put(depthImageView)
+                attachments.put(gSpecularImages[index].view) // ssaoOut
                 attachments.rewind()
 
                 val framebufferInfo = VkFramebufferCreateInfo.callocStack(this)
@@ -1483,7 +1504,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
 
-                    val clearValues = VkClearValue.callocStack(7, this)
+                    val clearValues = VkClearValue.callocStack(8, this)
                     // one per attachment
                     clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
                     clearValues.get(1).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
@@ -1492,6 +1513,7 @@ object VulkanRenderingEngine: IRenderEngine {
                     clearValues.get(4).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
                     clearValues.get(5).color(VkClearColorValue.callocStack(this).float32(floats(1f, 1f, 1f, 1f)))
                     clearValues.get(6).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+                    clearValues.get(7).color(VkClearColorValue.callocStack(this).float32(floats(0f, 0f, 0f, 1f)))
 
                     val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
                     renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
@@ -1514,7 +1536,7 @@ object VulkanRenderingEngine: IRenderEngine {
                         // TODO: parallelize?
                         for(group in renderGroups) {
                             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, group.pipeline.handle)
-                            bindTexture(commandBuffer, WhiteTexture, group.pipeline.layout)
+                            bindTexture(commandBuffer, TextureUsage.Diffuse, WhiteTexture, group.pipeline.layout)
 
                             it.recordCommandBuffer(group, commandBuffer, index)
                         }
@@ -1974,7 +1996,6 @@ object VulkanRenderingEngine: IRenderEngine {
 
         destroyCommandBuffers()
 
-        vkDestroyPipeline(logicalDevice, graphicsPipeline, Allocator)
         vkDestroyPipelineLayout(logicalDevice, gBufferPipeline.layout, Allocator)
         vkDestroyRenderPass(logicalDevice, usualRenderPass, Allocator)
 
@@ -2097,20 +2118,20 @@ object VulkanRenderingEngine: IRenderEngine {
         initSemaphore.acquire()
     }
 
-    private fun nextTextureID(): Int {
-        if(textureID >= MaxTextures) {
+    private fun nextTextureID(usage: TextureUsage): Int {
+        val texID = textureCounters[usage.ordinal]
+        if(texID >= MaxTextures) {
             error("No more texture space")
         }
-        val id = textureID
-        textureID++
-        return id
+        textureCounters[usage.ordinal] = texID+1
+        return texID
     }
 
     /**
      * Load a texture into Vulkan.
      * Caching is applied
      */
-    fun createTexture(path: String): Texture {
+    fun createTexture(path: String, usage: TextureUsage = TextureUsage.Diffuse): Texture {
         if(path in activeTextures) {
             return activeTextures[path]!!
         }
@@ -2120,12 +2141,17 @@ object VulkanRenderingEngine: IRenderEngine {
             createTextureImage(path, pImage, pImageMemory)
             val imageView = createImageView(!pImage, VK_FORMAT_R8G8B8A8_SRGB)
             // TODO: custom sampler
-            val texture = Texture(nextTextureID(), !pImage, imageView, path)
+            val texture = Texture(nextTextureID(usage), !pImage, imageView, path)
 
-            imageViews[texture.textureID] = imageView
-            println("created texture with ID ${texture.textureID}")
+            imageViews[usage.ordinal][texture.textureID] = imageView
+            println("created texture with ID ${texture.textureID} with usage ${usage.name}")
 
-            updateDescriptorSet(gBufferShaderDescriptor, DescriptorSetUpdateBuilder().textureSampling(texture))
+            val binding = when(usage) {
+                TextureUsage.Specular -> 3
+                TextureUsage.Diffuse -> 1
+                else -> 1
+            }
+            updateDescriptorSet(gBufferShaderDescriptor, DescriptorSetUpdateBuilder().textureSampling(texture, binding))
             activeTextures[path] = texture
 
             texture
@@ -2156,15 +2182,19 @@ object VulkanRenderingEngine: IRenderEngine {
         return UniformBufferObject(nextUBOID())
     }
 
-    private var currentTexture: Texture? = null
+    private var currentTexture = Array<Texture?>(TextureUsage.values().size) { null }
 
     /**
      * Only for use when recording to a command buffer
      */
-    internal fun bindTexture(commandBuffer: VkCommandBuffer, tex: Texture, pipelineLayout: VkPipeline = gBufferPipeline.layout) {
-        if(tex != currentTexture) { // send the push constant change only if texture actually changed
-            vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, intArrayOf(tex.textureID))
-            currentTexture = tex
+    internal fun bindTexture(commandBuffer: VkCommandBuffer, usage: TextureUsage, tex: Texture, pipelineLayout: VkPipeline = gBufferPipeline.layout) {
+        if(tex != currentTexture[usage.ordinal]) { // send the push constant change only if texture actually changed
+            val offset = when(usage) {
+                TextureUsage.Specular -> 4
+                else -> 0
+            }
+            vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, offset, intArrayOf(tex.textureID))
+            currentTexture[usage.ordinal] = tex
         }
     }
 
