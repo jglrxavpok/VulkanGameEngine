@@ -11,6 +11,8 @@ class Material(val diffuseTexture: TextureDescriptor?, val specularTexture: Text
         val None = Material(null, null)
     }
 
+    val batch = "material_base/"
+
     /**
      * Used by the rendering engine to know what texture to use
      */
@@ -24,13 +26,12 @@ class Material(val diffuseTexture: TextureDescriptor?, val specularTexture: Text
         VulkanRenderingEngine.createDescriptorSetFromBuilder(VulkanRenderingEngine.descriptorLayoutTexture, builder)
     } = VulkanRenderingEngine.descriptorLayoutTexture*/
 
-    fun prepareDescriptors(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, uboID: Int) {
+    fun prepareDescriptors(commandBuffer: VkCommandBuffer) {
         // TODO: change depending on shader
         val tex = diffuseTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
         val specular = specularTexture?.texture ?: VulkanRenderingEngine.WhiteTexture
         VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Diffuse, tex)
         VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Specular, specular)
-        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, uboID, VulkanRenderingEngine.gBufferShaderDescriptor)
     }
 }
 

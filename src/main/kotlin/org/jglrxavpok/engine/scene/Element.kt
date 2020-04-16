@@ -1,11 +1,9 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.Camera.Companion.AxisZ
-import org.jglrxavpok.engine.render.RenderGroup
+import org.jglrxavpok.engine.render.RenderBatches
 import org.joml.Quaternionf
 import org.joml.Vector3f
-import org.lwjgl.vulkan.VkCommandBuffer
 
 /**
  * Element of the Scene. Possesses components to update the element and to render it.
@@ -45,9 +43,9 @@ open class Element {
     /**
      * Prepares the rendering of this element to the given command buffer
      */
-    fun recordCommandBuffer(group: RenderGroup, commandBuffer: VkCommandBuffer, commandBufferIndex: Int) = synchronized(renderingComponents) {
-        renderingComponents.filter { it.renderGroup == group }.forEach {
-            it.record(this, commandBuffer, commandBufferIndex)
+    fun record(batches: RenderBatches) = synchronized(renderingComponents) {
+        renderingComponents.forEach {
+            it.record(this, batches)
         }
     }
 

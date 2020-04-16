@@ -1,14 +1,12 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.VkBuffer
-import org.jglrxavpok.engine.render.UniformBufferObject
-import org.jglrxavpok.engine.render.Vertex
-import org.jglrxavpok.engine.render.VertexFormat
+import org.jglrxavpok.engine.render.*
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10.*
 import org.lwjgl.vulkan.VkCommandBuffer
-import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.sizeof
+import org.joml.Matrix4f
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VkDevice
 
@@ -64,10 +62,16 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      */
     fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubo: UniformBufferObject) {
         MemoryStack.stackPush().use {
-            material.prepareDescriptors(commandBuffer, commandBufferIndex, ubo.uboID)
+            VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, ubo.uboID, VulkanRenderingEngine.gBufferShaderDescriptor)
+            material.prepareDescriptors(commandBuffer)
 
             directRecord(it, commandBuffer)
         }
+    }
+
+    fun dispatch(batches: RenderBatches, ubo: UniformBufferObject) {
+        // TODO: shadow casting in batch ID
+        batches.getBatch(material.batch).add(this, ubo)
     }
 
     /**

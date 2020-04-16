@@ -1,11 +1,10 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.RenderGroup
+import org.jglrxavpok.engine.render.RenderBatches
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.render.lighting.Light
 import org.jglrxavpok.engine.render.lighting.LightBufferObject
 import org.joml.Vector3f
-import org.lwjgl.vulkan.VkCommandBuffer
 import java.util.*
 
 /**
@@ -32,10 +31,10 @@ class Scene {
         }
     }
 
-    fun recordCommandBuffer(group: RenderGroup, commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
+    fun record(batches: RenderBatches) {
         synchronized(elements) {
             elements.forEach {
-                it.recordCommandBuffer(group, commandBuffer, commandBufferIndex)
+                it.record(batches)
             }
         }
     }

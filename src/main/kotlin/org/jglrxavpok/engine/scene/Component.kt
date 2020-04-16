@@ -1,8 +1,6 @@
 package org.jglrxavpok.engine.scene
 
-import org.jglrxavpok.engine.render.Camera
-import org.jglrxavpok.engine.render.RenderGroup
-import org.lwjgl.vulkan.VkCommandBuffer
+import org.jglrxavpok.engine.render.RenderBatches
 
 /**
  * Abstract component
@@ -15,13 +13,12 @@ interface Component {
  * Component that will render to framebuffer
  */
 interface RenderingComponent: Component {
-    val renderGroup: RenderGroup
     val castsShadows: Boolean
 
     /**
      * Prepares the rendering of this component to the given buffer
      */
-    fun record(element: Element, commandBuffer: VkCommandBuffer, commandBufferIndex: Int)
+    fun record(element: Element, batches: RenderBatches)
 
     /**
      * Updates information about the render matrices

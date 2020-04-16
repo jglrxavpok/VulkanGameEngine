@@ -128,7 +128,6 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var ssaoMemories:  List<VkDeviceMemory>
     private lateinit var lightMemories:  List<VkDeviceMemory>
     private val imageViews = Array(TextureUsage.values().size) { mutableMapOf<Int, VkImageView>() }
-    private val renderGroups = mutableListOf<RenderGroup>()
     private var uboID = 0
     private val textureCounters = IntArray(TextureUsage.values().size)
 
@@ -137,12 +136,7 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var lightingPipeline: GraphicsPipeline
     lateinit var ssaoPipeline: GraphicsPipeline
     lateinit var shadowMappingPipelines: List<GraphicsPipeline>
-    lateinit var defaultRenderGroup: RenderGroup
 
-    /**
-     * Special render group to compile the gbuffer info onto the screen
-     */
-    lateinit var toScreenGroup: RenderGroup
     private val gColorImages = mutableListOf<ImageInfo>()
     private val gPosImages = mutableListOf<ImageInfo>()
     private val gNormalImages = mutableListOf<ImageInfo>()
@@ -152,6 +146,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var screenQuad: Mesh
     private val ssaoBufferObject = SSAOBufferObject(SSAOKernelSize)
     private val lightBufferObject = LightBufferObject(MaxLights)
+    private val renderBatches = RenderBatches()
 
     /**
      * shadowMap[lightIndex][frameIndex]
@@ -303,11 +298,6 @@ object VulkanRenderingEngine: IRenderEngine {
 
         WhiteTexture = createTexture("/textures/white.png")
         BlackSpecularTexture = createTexture("/textures/black.png", TextureUsage.Specular)
-
-        defaultRenderGroup = object: RenderGroup {
-            override val pipeline get() = gBufferPipeline
-        }
-        renderGroups += defaultRenderGroup
 
         screenQuad = Mesh(listOf(
             Vertex(Vector3f(-1f, -1f, 0f)),
@@ -1536,14 +1526,11 @@ object VulkanRenderingEngine: IRenderEngine {
 
 
                     scene?.let {
-                        // TODO: parallelize?
-                        for(group in renderGroups) {
-                            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, group.pipeline.handle)
-                            bindTexture(commandBuffer, TextureUsage.Diffuse, WhiteTexture, group.pipeline.layout)
+                        it.record(renderBatches)
 
-                            it.recordCommandBuffer(group, commandBuffer, index)
-                        }
+                        renderBatches.recordAll(commandBuffer, index)
                     }
+
 
                     // Lighting pass
                     vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)

@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.io.AssimpFileSystem
+import org.jglrxavpok.engine.render.RenderBatches
 import org.jglrxavpok.engine.render.Vertex
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.joml.Vector2f
@@ -197,9 +198,9 @@ class Model {
     /**
      * Renders this model to the given command buffer
      */
-    fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
+    fun record(batches: RenderBatches) {
         meshes.forEach {
-            it.record(commandBuffer, commandBufferIndex, ubo)
+            it.dispatch(batches, ubo)
         }
     }
 
