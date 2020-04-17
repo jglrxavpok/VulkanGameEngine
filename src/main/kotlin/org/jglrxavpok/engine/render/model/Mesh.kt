@@ -1,13 +1,11 @@
 package org.jglrxavpok.engine.render.model
 
-import org.jglrxavpok.engine.VkBuffer
-import org.jglrxavpok.engine.VkDeviceMemory
+import org.jglrxavpok.engine.*
 import org.jglrxavpok.engine.render.*
+import org.jglrxavpok.engine.render.VulkanRenderingEngine.useStack
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10.*
 import org.lwjgl.vulkan.VkCommandBuffer
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.useStack
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VkDevice
 
@@ -17,6 +15,11 @@ import org.lwjgl.vulkan.VkDevice
 class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, autoload: Boolean = true, val vertexFormat: VertexFormat = VertexFormat.Companion.Default, val material: Material = Material.None) {
 
     val canBeInstanced = vertexFormat.instanceSize != 0
+
+    /**
+     * Tracks how many instance we had during the last recording. This allows to reuse the instance buffer and grow it only when necessary
+     */
+    private var previousInstanceCount = 0
 
     private var vertexBuffer: VkBuffer = -1
     private var indexBuffer: VkBuffer = -1
@@ -69,7 +72,7 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
     fun instancedRecord(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubos: List<UniformBufferObject>) {
         this.instances.clear()
         this.instances += ubos
-        VulkanRenderingEngine.useStack {
+        useStack {
             material.prepareDescriptors(commandBuffer, commandBufferIndex)
 
             directRecord(this, commandBuffer, ubos.size)
@@ -80,7 +83,7 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
         if(instances.size == 0)
             return
         val instanceBufferSize = (vertexFormat.instanceSize * instances.size).toLong()
-        VulkanRenderingEngine.useStack {
+        useStack {
             val instanceBuffer = malloc(instanceBufferSize.toInt())
 
             for(instance in instances) {
@@ -94,6 +97,8 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
 
     private fun prepareInstanceBuffer(instanceCount: Int) {
         if(instanceCount == 0)
+            return
+        if(previousInstanceCount >= instanceCount)
             return
         if(this.instanceBuffer != -1L) {
             vkFreeMemory(VulkanRenderingEngine.logicalDevice, instanceBufferMemory, VulkanRenderingEngine.Allocator)
@@ -112,6 +117,7 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
         this.instanceBufferMemory = instanceBufferInfo.second
 
         MemoryUtil.memFree(instanceBuffer)
+        previousInstanceCount = instanceCount
     }
 
     fun dispatch(batches: RenderBatches, ubo: UniformBufferObject) {
@@ -123,10 +129,8 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      * Only performs the recording, without applying the material
      */
     fun directRecord(stack: MemoryStack, commandBuffer: VkCommandBuffer, instanceCount: Int) {
-        if(canBeInstanced && this.instanceBuffer == -1L) {
+        if(canBeInstanced) {
             prepareInstanceBuffer(instanceCount)
-            instances.clear()
-            instances += (0 until instanceCount).map { UniformBufferObject() }
         }
         val pVertexBuffers = stack.mallocLong(if(canBeInstanced) 2 else 1)
         pVertexBuffers.put(vertexBuffer)

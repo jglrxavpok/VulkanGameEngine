@@ -33,7 +33,7 @@ void main() {
     float specularIntensity = subpassLoad(gSpecular).r;
 
     vec3 lighting = color * lights.ambientLight.color;
-    for(int i = 0; i < MAX_POINT_LIGHTS; i++) {
+    for(int i = 0; i < lights.pointLightCount; i++) {
         PointLight light = lights.pointLights[i];
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
@@ -49,7 +49,7 @@ void main() {
 
         lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay);
     }
-    for(int i = 0; i < MAX_DIRECTIONAL_LIGHTS; i++) {
+    for(int i = 0; i < lights.directionalLightCount; i++) {
         DirectionalLight light = lights.directionalLights[i];
 
         vec3 lightDir = normalize(light.viewDirection);
@@ -63,7 +63,7 @@ void main() {
         lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay);
     }
 
-    for(int i = 0; i < MAX_SPOT_LIGHTS; i++) {
+    for(int i = 0; i < lights.spotLightCount; i++) {
         SpotLight light = lights.spotLights[i];
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);

@@ -37,4 +37,7 @@ layout(binding = 3) uniform LightBuffer {
     PointLight pointLights[MAX_POINT_LIGHTS];
     SpotLight spotLights[MAX_SPOT_LIGHTS];
     DirectionalLight directionalLights[MAX_DIRECTIONAL_LIGHTS];
+    int pointLightCount;
+    int spotLightCount;
+    int directionalLightCount;
 } lights;

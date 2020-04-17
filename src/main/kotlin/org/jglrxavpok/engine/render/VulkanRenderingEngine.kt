@@ -1413,7 +1413,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun beginSingleUseCommandBuffer(): VkCommandBuffer {
         return useStack {
             // allocate command buffer to perform copy
-            val allocInfo = VkCommandBufferAllocateInfo.callocStack()
+            val allocInfo = VkCommandBufferAllocateInfo.callocStack(this)
             allocInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO)
             allocInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
             allocInfo.commandPool(commandPool) // TODO: maybe use a separate pool for temp buffers

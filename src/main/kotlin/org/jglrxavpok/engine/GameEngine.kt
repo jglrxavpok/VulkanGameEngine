@@ -5,6 +5,7 @@ import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.goldstache.GoldstacheInfo
 import org.lwjgl.glfw.GLFW.glfwGetTime
 import org.lwjgl.glfw.GLFW.glfwMakeContextCurrent
+import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -52,6 +53,10 @@ object GameEngine {
                 }
             }
         }
+    }
+
+    fun trackMemoryStack(location: String) {
+        println("[Memory-Tracking] At $location, pointer is ${MemoryStack.stackGet().pointer}")
     }
 
 }

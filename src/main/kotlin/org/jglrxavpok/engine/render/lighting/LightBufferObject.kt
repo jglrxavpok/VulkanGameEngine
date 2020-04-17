@@ -20,6 +20,7 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
                     +lightingConfiguration.directionalLightCount * DirectionalLight.SizeOf
                     +lightingConfiguration.pointLightCount * PointLight.SizeOf
                     +lightingConfiguration.spotLightCount * SpotLight.SizeOf
+                    +3* sizeof<Int>() + sizeof<Int>() // light counts + padding
             ).toLong()
     }
 
@@ -29,6 +30,10 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
     private val spotLights = Array<SpotLight>(lightingConfiguration.spotLightCount) { SpotLight.None }
     private val directionalLights = Array<DirectionalLight>(lightingConfiguration.directionalLightCount) { DirectionalLight.None }
     val ambientLighting = Vector3f(0f)
+
+    private var directionalLightCount = 0
+    private var spotLightCount = 0
+    private var pointLightCount = 0
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
         buffer.putFloat(ambientLighting.x())
@@ -44,6 +49,10 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
         for (light in directionalLights) {
             light.write(buffer, viewMatrix)
         }
+        buffer.putInt(pointLightCount)
+        buffer.putInt(spotLightCount)
+        buffer.putInt(directionalLightCount)
+        buffer.putInt(-1) // padding
         return buffer
     }
 
@@ -71,5 +80,8 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
                 else -> error("Unsupported light type: $it")
             }
         }
+        pointLightCount = pointCursor
+        spotLightCount = spotCursor
+        directionalLightCount = directionalCursor
     }
 }

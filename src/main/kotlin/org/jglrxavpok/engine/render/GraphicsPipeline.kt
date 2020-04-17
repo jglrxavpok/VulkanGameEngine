@@ -97,7 +97,7 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
             fragShaderStageInfo.module(fragmentShaderModule)
             fragShaderStageInfo.stage(VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
             fragShaderStageInfo.pName(this.UTF8(fragmentShaderEntryPoint))
-
+            
             val shaderStages = VkPipelineShaderStageCreateInfo.callocStack(2, this)
             shaderStages.put(vertShaderStageInfo)
             shaderStages.put(fragShaderStageInfo)

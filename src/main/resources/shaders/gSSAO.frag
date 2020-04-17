@@ -14,7 +14,7 @@ layout(binding = 2) uniform sampler2D noise;
 
 layout(binding = 3) uniform SSAOBufferObject {
     mat4 projection;
-    vec3 noiseSamples[SAMPLE_COUNT];
+    vec3 noiseSamples[SAMPLE_COUNT]; // TODO: move to specialization
 } ubo;
 
 layout(location = 0) out vec4 ssaoFactor;
