@@ -22,10 +22,11 @@ layout(location = 4) out vec3 fragViewPos;
 void main() {
     mat4 modelview = camera.view * model;
     vec4 worldPos = model * vec4(inPosition, 1.0);
-    gl_Position = camera.proj * camera.view * worldPos;
     fragColor = inColor;
     fragTexCoord = inTexCoords;
     fragWorldPos = worldPos.xyz;
-    fragViewNormal = normalize((transpose(inverse(modelview)) * vec4(inNormal, 0.0)).xyz);
+    fragViewNormal = normalize(transpose(inverse(mat3(modelview))) * inNormal);
     fragViewPos = (camera.view * worldPos).xyz;
+
+    gl_Position = camera.proj * vec4(fragViewPos, 1.0);
 }

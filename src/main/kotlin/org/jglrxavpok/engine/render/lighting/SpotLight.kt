@@ -5,6 +5,7 @@ import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
 import org.joml.Vector3f
 import java.nio.ByteBuffer
+import kotlin.math.cos
 
 open class SpotLight: Light(), PositionableLight {
     override val type = LightType.Spot
@@ -25,7 +26,7 @@ open class SpotLight: Light(), PositionableLight {
         viewMatrix.transformPosition(position, tmp)
         tmp.get(buffer)
         buffer.skip(sizeof<Vector3f>())
-        buffer.putFloat(angle.toFloat())
+        buffer.putFloat(cos(angle/2f).toFloat()) // coscutoff
 
         viewMatrix.transformDirection(direction, tmp)
         tmp.get(buffer)
@@ -57,7 +58,7 @@ open class SpotLight: Light(), PositionableLight {
     companion object {
         val SizeOf =
             sizeof<Vector3f>() + // position
-            sizeof<Float>() + // angle
+            sizeof<Float>() + // cos of angle (coscutoff)
             sizeof<Vector3f>() + // direction
             sizeof<Float>() + // padding
             sizeof<Vector3f>() + // color

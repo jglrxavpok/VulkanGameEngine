@@ -23,7 +23,7 @@ struct DirectionalLight {
 
 struct SpotLight {
     vec3 viewPosition;
-    float angle;
+    float coscutoff;
     vec3 viewDirection;
     vec3 color;
     float intensity;

@@ -23,6 +23,7 @@ class Scene {
     private val lights = LinkedList<Light>()
     val ambientLighting = Vector3f(0f)
 
+    // TODO: replace with locks
     fun addElement(element: Element) {
         synchronized(elements) {
             elements.add(element)

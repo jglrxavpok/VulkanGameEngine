@@ -57,7 +57,7 @@ void main() {
         vec3 diffuse = exposure(fragNormal, lightDir) * reflectedColor;
         lighting += diffuse;
 
-        vec3 reflectedRay = normalize(reflect(light.viewDirection, fragNormal));
+        vec3 reflectedRay = normalize(reflect(lightDir, fragNormal));
         vec3 fragToEye = normalize(-fragPosition);
 
         lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay);
@@ -69,10 +69,10 @@ void main() {
         vec3 lightDir = normalize(lightToPoint);
 
         float spotFactor = max(dot(lightDir, normalize(light.viewDirection)), 0.0);
-        if(spotFactor < cos(light.angle/2.0f)) {
+        if(spotFactor < light.coscutoff) {
             spotFactor = 0.0f;
         } else {
-            float minDot = cos(light.angle/2.0f);
+            float minDot = light.coscutoff;
             float dotRange = 1.0f-minDot;
             spotFactor = (spotFactor-minDot)/dotRange;
         }
