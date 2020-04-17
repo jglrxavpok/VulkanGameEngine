@@ -8,7 +8,6 @@ import org.joml.Vector2f
 import org.joml.Vector3f
 import org.lwjgl.assimp.*
 import org.lwjgl.system.MemoryUtil
-import org.lwjgl.vulkan.VkCommandBuffer
 import org.lwjgl.vulkan.VkDevice
 
 /**
@@ -35,8 +34,6 @@ class Model {
         meshes.addAll(toCopy.meshes)
         materials.addAll(toCopy.materials)
         ubo.model.set(toCopy.ubo.model)
-        ubo.proj.set(toCopy.ubo.proj)
-        ubo.view.set(toCopy.ubo.view)
     }
 
     /**
@@ -213,4 +210,5 @@ class Model {
             it.free(logicalDevice)
         }
     }
+
 }

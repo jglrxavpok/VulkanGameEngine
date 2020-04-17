@@ -30,7 +30,7 @@ class Camera(aspectRatio: Float) {
     /**
      * Prepares the UBO to render from this camera
      */
-    fun updateUBO(ubo: UniformBufferObject) {
+    fun updateCameraObject(ubo: CameraObject) {
         val rot by lazy { Quaternionf() }
         rot.identity().rotateY(yaw).rotateX(pitch).rotateZ(roll).conjugate()
         view.identity().rotate(rot).translate(-position.x(), -position.y(), -position.z())

@@ -27,7 +27,6 @@ import org.lwjgl.vulkan.KHRSurface.*
 import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
 import org.jglrxavpok.engine.scene.Scene
-import org.lwjgl.assimp.Assimp
 import org.lwjgl.stb.STBImage
 import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
 import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
@@ -62,7 +61,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation", "VK_LAYER_LUNARG_monitor")
     private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
-    internal val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
+    private val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
     // Start of Vulkan objects
 
@@ -124,7 +123,6 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var ssaoShaderDescriptor: DescriptorSet
     lateinit var renderToScreenShaderDescriptor: DescriptorSet
     lateinit var emptyDescriptor: DescriptorSet
-    private lateinit var uboMemories:  List<VkDeviceMemory>
     private lateinit var ssaoMemories:  List<VkDeviceMemory>
     private lateinit var lightMemories:  List<VkDeviceMemory>
     private val imageViews = Array(TextureUsage.values().size) { mutableMapOf<Int, VkImageView>() }
@@ -147,6 +145,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val ssaoBufferObject = SSAOBufferObject(SSAOKernelSize)
     private val lightBufferObject = LightBufferObject(MaxLights)
     private val renderBatches = RenderBatches()
+    private lateinit var cameraObject: CameraObject
 
     /**
      * shadowMap[lightIndex][frameIndex]
@@ -233,8 +232,11 @@ object VulkanRenderingEngine: IRenderEngine {
         nearestSampler = createTextureSampler(VK_FILTER_NEAREST)
         descriptorPool = createDescriptorPool()
 
-        val uboInfo = prepareUniformBuffers(UniformBufferObject.SizeOf)
-        uboMemories = uboInfo.second
+        // TODO: custom cameras
+        val cameraInfo = prepareUniformBuffers(CameraObject.SizeOf, 1)
+        val cameraObjectMemories = cameraInfo.second
+
+        cameraObject = CameraObject(cameraObjectMemories)
 
         val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize), 1)
         val ssaoBuffers = ssaoInfo.first
@@ -267,8 +269,8 @@ object VulkanRenderingEngine: IRenderEngine {
         gBufferShaderDescriptor = createDescriptorSetFromBuilder(
             gBufferPipeline.descriptorSetLayouts[0],
             DescriptorSetUpdateBuilder()
+                .cameraBuffer(cameraInfo.first)
                 .sampler(linearSampler)
-                .ubo(uboInfo.first)
         )
         lightingShaderDescriptor = createDescriptorSetFromBuilder(
             lightingPipeline.descriptorSetLayouts[0],
@@ -418,10 +420,6 @@ object VulkanRenderingEngine: IRenderEngine {
         .vertexShaderModule("/shaders/lightingBase.vertc")
         .fragmentShaderModule("/shaders/${lightType.shaderName}.fragc")
 
-    fun getUBOMemory(frameIndex: Int): VkDeviceMemory {
-        return uboMemories[frameIndex]
-    }
-
     fun getSSAOMemory(frameIndex: Int): VkDeviceMemory {
         return ssaoMemories[frameIndex]
     }
@@ -465,7 +463,8 @@ object VulkanRenderingEngine: IRenderEngine {
         if( ! vulkan.capabilities.VK_EXT_debug_utils) {
             error("Impossible to setup Vulkan logging, capability is not present")
         }
-        MemoryStack.stackPush().use { stack ->
+        useStack {
+            val stack = this
             val createInfo = VkDebugUtilsMessengerCreateInfoEXT.callocStack(stack)
             createInfo.sType(EXTDebugUtils.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT)
             createInfo.pfnUserCallback { messageSeverity, messageTypes, pCallbackData, pUserData ->
@@ -1332,7 +1331,7 @@ object VulkanRenderingEngine: IRenderEngine {
      * @param dataBuffer the data to fill the buffer with
      * @param bufferSize the size of the data to upload, in bytes
      */
-    fun uploadBuffer(usage: VkBufferUsageFlags, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): VkBuffer {
+    fun uploadBuffer(usage: VkBufferUsageFlags, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): Pair<VkBuffer, VkDeviceMemory> {
         return useStack {
             val pBuffer = mallocLong(1)
             val pMemory = mallocLong(1)
@@ -1357,7 +1356,34 @@ object VulkanRenderingEngine: IRenderEngine {
             vkDestroyBuffer(logicalDevice, stagingBuffer, Allocator)
             vkFreeMemory(logicalDevice, stagingBufferMemory, Allocator)
 
-            result
+            result to !pMemory
+        }
+    }
+
+    /**
+     * Same as uploadBuffer but does not create a new buffer
+     */
+    fun fillBuffer(buffer: VkBuffer, dataBuffer: ByteBuffer, bufferSize: VkDeviceSize): Unit {
+        useStack {
+            val pBuffer = mallocLong(1)
+            val pMemory = mallocLong(1)
+            createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, pBuffer, pMemory)
+            val stagingBuffer = !pBuffer
+            val stagingBufferMemory = !pMemory
+
+            val ppData = mallocPointer(1)
+            vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, ppData).checkVKErrors()
+            val data = ppData.get(0)
+            val prevPos = dataBuffer.position()
+            dataBuffer.position(0)
+            memCopy(memAddress(dataBuffer), data, bufferSize)
+            dataBuffer.position(prevPos)
+            vkUnmapMemory(logicalDevice, stagingBufferMemory)
+
+            copyBuffer(stagingBuffer, buffer, bufferSize)
+
+            vkDestroyBuffer(logicalDevice, stagingBuffer, Allocator)
+            vkFreeMemory(logicalDevice, stagingBufferMemory, Allocator)
         }
     }
 
@@ -1524,6 +1550,7 @@ object VulkanRenderingEngine: IRenderEngine {
                         VK_SUBPASS_CONTENTS_INLINE
                     ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
+                    renderBatches.reset()
 
                     scene?.let {
                         it.record(renderBatches)
@@ -1567,7 +1594,7 @@ object VulkanRenderingEngine: IRenderEngine {
             )
 
             // TODO: move to secondary buffer
-            screenQuad.directRecord(this, commandBuffer)
+            screenQuad.directRecord(this, commandBuffer, 1)
         }
     }
 
@@ -1575,18 +1602,20 @@ object VulkanRenderingEngine: IRenderEngine {
      * Tells Vulkan to start using the given descriptor sets from now on.
      * Set order is important
      */
-    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, uboID: Int, vararg sets: DescriptorSet) {
+    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, vararg sets: DescriptorSet) {
         useStack {
             val pSets = mallocLong(sets.size)
             for(i in sets.indices) {
                 pSets.put(i, sets[i][commandBufferIndex])
             }
+
             val offsets = mallocInt(1)
-            offsets.put(0, (uboID*UniformBufferObject.SizeOf).toInt())
-            VK10.vkCmdBindDescriptorSets(
+            offsets.put(0)
+            offsets.flip()
+            vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                gBufferPipeline.layout,
+                gBufferPipeline.layout, // TODO customizable
                 0,
                 pSets,
                 offsets
@@ -1888,9 +1917,14 @@ object VulkanRenderingEngine: IRenderEngine {
             defaultCamera.position.add(direction)
         }
 
+        defaultCamera.updateCameraObject(cameraObject)
+        cameraObject.update(logicalDevice, memoryStack, frameIndex)
+
         if(scene != null) {
             scene!!.preRenderFrame(frameIndex, lightBufferObject)
         }
+
+        renderBatches.updateInstances(frameIndex)
 
         useStack {
             // TODO: customize camera
@@ -2050,7 +2084,7 @@ object VulkanRenderingEngine: IRenderEngine {
         glfwTerminate()
     }
 
-    private fun <T> useStack(action: MemoryStack.() -> T) = memoryStack.push().use(action)
+    internal fun <T> useStack(action: MemoryStack.() -> T) = memoryStack.useStack(action)
 
     /**
      * Tells the engine which scene to render
@@ -2161,15 +2195,8 @@ object VulkanRenderingEngine: IRenderEngine {
         return model
     }
 
-    private fun nextUBOID(): Int {
-        if(uboID >= MaxObjects) {
-            error("out of UBO space")
-        }
-        return uboID++
-    }
-
     fun createUBO(): UniformBufferObject {
-        return UniformBufferObject(nextUBOID())
+        return UniformBufferObject()
     }
 
     private var currentTexture = Array<Texture?>(TextureUsage.values().size) { null }

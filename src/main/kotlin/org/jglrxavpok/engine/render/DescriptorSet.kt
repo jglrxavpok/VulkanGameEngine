@@ -69,24 +69,26 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
             target.pImageInfo(imageInfo)
+            target.descriptorCount(1)
         }
     }
 
     /**
      * Uniform Buffer Object Binding
      */
-    data class UBOBinding(val uboBuffers: List<VkBuffer>): Binding {
+    data class CameraObjectBinding(val buffers: List<VkBuffer>): Binding {
         override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val bufferInfo = VkDescriptorBufferInfo.callocStack(1, stack)
-            bufferInfo.buffer(uboBuffers[frameIndex])
+            bufferInfo.buffer(buffers[frameIndex])
             bufferInfo.offset(0)
-            bufferInfo.range(UniformBufferObject.SizeOf)
+            bufferInfo.range(CameraObject.SizeOf)
 
             target.dstBinding(0) // binding for our UBO
             target.dstArrayElement(0) // 0 because we are not writing to an array
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
             target.pBufferInfo(bufferInfo)
+            target.descriptorCount(1)
         }
     }
 
@@ -105,6 +107,7 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(if(dynamic) VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC else VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
             target.pBufferInfo(bufferInfo)
+            target.descriptorCount(1)
         }
     }
 
@@ -118,6 +121,7 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLER)
             target.pImageInfo(imageInfo)
+            target.descriptorCount(1)
         }
     }
 
@@ -136,6 +140,7 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT)
             target.pImageInfo(imageInfo)
+            target.descriptorCount(1)
         }
     }
 
@@ -151,6 +156,7 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
             target.pImageInfo(imageInfo)
+            target.descriptorCount(1)
         }
     }
 
@@ -166,8 +172,8 @@ class DescriptorSetUpdateBuilder {
      * Adds a new ubo binding
      */
     // TODO: merge with uniformBuffer()
-    fun ubo(buffers: List<VkBuffer>): DescriptorSetUpdateBuilder {
-        bindings += UBOBinding(buffers)
+    fun cameraBuffer(buffers: List<VkBuffer>): DescriptorSetUpdateBuilder {
+        bindings += CameraObjectBinding(buffers)
         return this
     }
 

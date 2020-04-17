@@ -9,7 +9,7 @@ import org.lwjgl.system.MemoryUtil
 /**
  * FileSystem to use to load Assimp assets from classpath
  */
-val AssimpFileSystem = AIFileIO.malloc()
+val AssimpFileSystem = AIFileIO.create()
     .OpenProc { pFileIO, fileName, openMode ->
         val path = MemoryUtil.memUTF8(fileName)
         val connection = Model::class.java.getResource(path).openConnection()
@@ -49,5 +49,5 @@ val AssimpFileSystem = AIFileIO.malloc()
             .address()
     }
     .CloseProc { pFileIO, pFile ->
-        // TODO
+        AIFile.create(pFile).free()
     }

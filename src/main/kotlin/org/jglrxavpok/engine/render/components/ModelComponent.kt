@@ -13,7 +13,7 @@ import org.lwjgl.vulkan.VkCommandBuffer
  * Entity rendering component.
  * Used to render a given model at the location of the entity
  */
-class ModelComponent(val path: String, val camera: Camera = VulkanRenderingEngine.defaultCamera, castsShadows: Boolean = true): RenderingComponent {
+class ModelComponent(val path: String, castsShadows: Boolean = true): RenderingComponent {
 
     override val castsShadows: Boolean = castsShadows
     val model: Model by VulkanRenderingEngine.load({ Model.Empty }) { VulkanRenderingEngine.createModel(path) }
@@ -24,9 +24,7 @@ class ModelComponent(val path: String, val camera: Camera = VulkanRenderingEngin
     }
 
     override fun preFrameRender(element: Element, frameIndex: Int) {
-        camera.updateUBO(model.ubo)
         model.ubo.model.identity().translate(element.position).rotate(element.rotation).mul(localTransform)
-        model.ubo.update(VulkanRenderingEngine.logicalDevice, VulkanRenderingEngine.memoryStack, frameIndex)
     }
 
 }

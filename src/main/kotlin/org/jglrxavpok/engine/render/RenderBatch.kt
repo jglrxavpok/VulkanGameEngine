@@ -4,13 +4,14 @@ import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.TextureUsage
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkCommandBuffer
+import java.util.*
 
 /**
  * Represents a group of renderable elements that can be batched together
  */
 class RenderBatch {
 
-    private var entries = mutableListOf<Pair<Mesh, UniformBufferObject>>()
+    private var entries = mutableMapOf<Mesh, MutableList<UniformBufferObject>>()
 
     /**
      * Pipeline used for rendering
@@ -23,19 +24,26 @@ class RenderBatch {
         // TODO: this is pipeline dependent!
         VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Diffuse, VulkanRenderingEngine.WhiteTexture, pipeline.layout)
 
-        // TODO: Use instanced rendering
-        for((mesh, ubo) in entries) {
-            // TODO: use ubo
-            mesh.record(commandBuffer, commandBufferIndex, ubo)
+        for((mesh, uboList) in entries) {
+            mesh.instancedRecord(commandBuffer, commandBufferIndex, uboList)
         }
-        entries.clear()
     }
 
     /**
      * Adds a mesh that will be put in the batch
      */
     fun add(mesh: Mesh, ubo: UniformBufferObject) {
-        entries.add(mesh to ubo)
+        entries.getOrPut(mesh, ::LinkedList) += ubo
+    }
+
+    fun reset() {
+        entries.clear()
+    }
+
+    fun updateInstances(frameIndex: Int) {
+        entries.keys.forEach {
+            it.updateInstances(frameIndex)
+        }
     }
 
 }
@@ -51,6 +59,16 @@ class RenderBatches {
     fun recordAll(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         for(batch in batches.values) {
             batch.record(commandBuffer, commandBufferIndex)
+        }
+    }
+
+    fun reset() {
+        batches.values.forEach(RenderBatch::reset)
+    }
+
+    fun updateInstances(frameIndex: Int) {
+        batches.values.forEach {
+            it.updateInstances(frameIndex)
         }
     }
 }
