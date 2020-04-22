@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.render
 
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.render.VulkanDebug.name
 import org.joml.Vector2i
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.*
@@ -78,8 +79,8 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
         // TODO: Combine?
         // TODO: Specialization Info
         // TODO: allow own render passes
-        val fragCode = javaClass.getResourceAsStream(fragmentShaderModule).readBytes()
-        val vertCode = javaClass.getResourceAsStream(vertexShaderModule).readBytes()
+        val fragCode = (javaClass.getResourceAsStream(fragmentShaderModule) ?: error("Cannot find shader $fragmentShaderModule")).readBytes()
+        val vertCode = (javaClass.getResourceAsStream(vertexShaderModule) ?: error("Cannot find shader $vertexShaderModule")).readBytes()
         val fragmentShaderModule = createShaderModule(memoryStack, fragCode)
         val vertexShaderModule = createShaderModule(memoryStack, vertCode)
         val swapchainExtent = extent.toExtent(memoryStack)
@@ -257,6 +258,10 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
             }
             GraphicsPipeline(!pGraphicsPipeline, !pPipelineLayout, descriptorSetLayoutsList)
         }
+
+        name(result.handle, "GraphicsPipeline(${this.vertexShaderModule}; ${this.fragmentShaderModule})", EXTDebugReport.VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_EXT)
+        name(result.layout, "GraphicsPipelineLayout(${this.vertexShaderModule}; ${this.fragmentShaderModule})", EXTDebugReport.VK_DEBUG_REPORT_OBJECT_TYPE_PIPELINE_LAYOUT_EXT)
+        name(result.descriptorSetLayouts[0], "DescriptorSetLayout(${this.vertexShaderModule}; ${this.fragmentShaderModule})", EXTDebugReport.VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT_EXT)
 
         VK10.vkDestroyShaderModule(
             VulkanRenderingEngine.logicalDevice,

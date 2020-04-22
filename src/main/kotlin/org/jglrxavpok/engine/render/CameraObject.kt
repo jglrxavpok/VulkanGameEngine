@@ -1,15 +1,23 @@
 package org.jglrxavpok.engine.render
 
 import org.jglrxavpok.engine.VkDeviceMemory
+import org.jglrxavpok.engine.render.VulkanDebug.name
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
+import org.lwjgl.vulkan.EXTDebugReport
 import java.nio.ByteBuffer
 
 class CameraObject(val memories: List<VkDeviceMemory>): ShaderResource() {
 
     companion object {
         val SizeOf = sizeof<Matrix4f>() *2L
+    }
+
+    init {
+        memories.forEachIndexed { index, it ->
+            name(it, "CameraObjectMemory[frame=$index]", EXTDebugReport.VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
+        }
     }
 
     val view = Matrix4f()

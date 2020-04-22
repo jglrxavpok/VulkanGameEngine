@@ -1,5 +1,6 @@
 package org.jglrxavpok.engine.render.lighting
 
+import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
@@ -41,6 +42,13 @@ open class SpotLight: Light(), PositionableLight {
         buffer.putFloat(attenuationQuadratic)
 
         buffer.putFloat(-1f) // padding
+    }
+
+    override fun updateCameraForShadowMapping(camera: Camera) {
+        camera.projection.identity().perspective((angle/2f).toFloat(), camera.aspectRatio, 0.001f, 1000f)
+        camera.position.set(position)
+
+        // TODO camera.pitch etc.
     }
 
     object None: SpotLight() {

@@ -1,5 +1,6 @@
 package org.jglrxavpok.engine.render.lighting
 
+import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
@@ -34,6 +35,10 @@ open class PointLight: Light(), PositionableLight {
         buffer.putFloat(attenuationQuadratic)
 
         buffer.putFloat(-1f) // padding
+    }
+
+    override fun updateCameraForShadowMapping(camera: Camera) {
+        TODO("Not yet implemented")
     }
 
     object None: PointLight() {

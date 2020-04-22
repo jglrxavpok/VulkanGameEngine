@@ -29,7 +29,7 @@ class Material(val diffuseTexture: TextureDescriptor?, val specularTexture: Text
     fun prepareDescriptors(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
         // TODO: descriptor set for material information?
         // TODO: could be useful to swap textures
-        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, VulkanRenderingEngine.gBufferShaderDescriptor)
+        VulkanRenderingEngine.useDescriptorSets(commandBuffer, commandBufferIndex, VulkanRenderingEngine.gBufferPipeline, VulkanRenderingEngine.gBufferShaderDescriptor)
 
         // TODO: change depending on shader
         val tex = diffuseTexture?.texture ?: VulkanRenderingEngine.WhiteTexture

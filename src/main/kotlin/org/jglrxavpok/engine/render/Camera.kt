@@ -8,7 +8,7 @@ import org.joml.Vector3fc
 /**
  * Camera used to render
  */
-class Camera(aspectRatio: Float) {
+class Camera(val aspectRatio: Float) {
 
     companion object {
         val UpAxis = Vector3f(0f, 1f, 0f)
@@ -30,15 +30,15 @@ class Camera(aspectRatio: Float) {
     /**
      * Prepares the UBO to render from this camera
      */
-    fun updateCameraObject(ubo: CameraObject) {
+    fun updateCameraObject(cameraObject: CameraObject) {
         val rot by lazy { Quaternionf() }
         rot.identity().rotateY(yaw).rotateX(pitch).rotateZ(roll).conjugate()
         view.identity().rotate(rot).translate(-position.x(), -position.y(), -position.z())
 
-        ubo.view.set(view)
-        ubo.proj.set(projection)
+        cameraObject.view.set(view)
+        cameraObject.proj.set(projection)
 
-        ubo.proj.m11(ubo.proj.m11() * -1) // invert Y Axis (OpenGL -> Vulkan translation)
+        cameraObject.proj.m11(cameraObject.proj.m11() * -1) // invert Y Axis (OpenGL -> Vulkan translation)
     }
 
 }

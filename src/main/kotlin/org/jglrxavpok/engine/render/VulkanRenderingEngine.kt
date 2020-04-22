@@ -29,8 +29,7 @@ import java.nio.ByteBuffer
 import org.jglrxavpok.engine.scene.Scene
 import org.lwjgl.stb.STBImage
 import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
-import org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1
-import org.lwjgl.vulkan.VK11.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+import org.lwjgl.vulkan.VK11.*
 import java.nio.LongBuffer
 import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
@@ -60,7 +59,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val maxFramesInFlight = 3
 
     private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation", "VK_LAYER_LUNARG_monitor")
-    private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
+    private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME, EXTDebugMarker.VK_EXT_DEBUG_MARKER_EXTENSION_NAME)
     private val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
     // Start of Vulkan objects
@@ -76,17 +75,19 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var presentQueue: VkQueue
     private var swapchainFormat: Int = -1
     private var swapchainPresentMode: VkPresentModeKHR = -1
-    private var usualRenderPass: VkRenderPass = -1
-    private var shadowMapRenderPass: VkRenderPass = -1
-    private var commandPool: VkCommandPool = -1
-    private var descriptorPool: VkDescriptorPool = -1
+    private var usualRenderPass: VkRenderPass = VK_NULL_HANDLE
+    private var shadowMapRenderPass: VkRenderPass = VK_NULL_HANDLE
+    private var primaryCommandPool: VkCommandPool = VK_NULL_HANDLE
+    private var secondaryCommandPool: VkCommandPool = VK_NULL_HANDLE
+    private var temporaryCommandPool: VkCommandPool = VK_NULL_HANDLE
+    private var descriptorPool: VkDescriptorPool = VK_NULL_HANDLE
 
-    internal var linearSampler: VkSampler = -1
-    internal var nearestSampler: VkSampler = -1
+    internal var linearSampler: VkSampler = VK_NULL_HANDLE
+    internal var nearestSampler: VkSampler = VK_NULL_HANDLE
 
-    private var depthImage: VkImage = -1
-    private var depthImageMemory: VkDeviceMemory = -1
-    private var depthImageView: VkImageView = -1
+    private var depthImage: VkImage = VK_NULL_HANDLE
+    private var depthImageMemory: VkDeviceMemory = VK_NULL_HANDLE
+    private var depthImageView: VkImageView = VK_NULL_HANDLE
 
     private lateinit var imageAvailableSemaphores: List<VkSemaphore>
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
@@ -96,12 +97,14 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var swapchainImageViews: List<VkImageView>
     private lateinit var swapchainFramebuffers: List<VkFramebuffer>
     private lateinit var shadowMapFramebuffers: List<VkFramebuffer>
-    private lateinit var commandBuffers: List<VkCommandBuffer>
+    private lateinit var primaryCommandBuffers: List<VkCommandBuffer>
+    private lateinit var secondaryCommandBuffers: List<VkCommandBuffer>
 
     private var currentFrame = 0
 
     // End of Vulkan objects
     lateinit var defaultCamera: Camera
+    lateinit var lightCamera: Camera
 
     private var previousPosX = 0.0
     private var previousPosY = 0.0
@@ -134,6 +137,8 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var lightingPipeline: GraphicsPipeline
     lateinit var ssaoPipeline: GraphicsPipeline
     lateinit var shadowMappingPipelines: List<GraphicsPipeline>
+    lateinit var shadowMappingShaderDescriptors: List<DescriptorSet>
+    lateinit var shadowMappingCameraObjects: List<CameraObject>
 
     private val gColorImages = mutableListOf<ImageInfo>()
     private val gPosImages = mutableListOf<ImageInfo>()
@@ -218,13 +223,15 @@ object VulkanRenderingEngine: IRenderEngine {
         createSwapchain()
         createCamera()
         createRenderImageViews()
-        shadowMapRenderPass = createShadowPass(findDepthFormat())
+        shadowMapRenderPass = createShadowPass(getDepthFormat())
         usualRenderPass = createRenderPass()
         gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
         lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())
         ssaoPipeline = createGraphicsPipeline(ssaoPipelineBuilder())
-        createCommandPool()
+        primaryCommandPool = createCommandPool()
+        secondaryCommandPool = createCommandPool()
+        temporaryCommandPool = createCommandPool()
         createDepthResources()
         createFramebuffers()
         createShadowMapFramebuffers()
@@ -272,14 +279,19 @@ object VulkanRenderingEngine: IRenderEngine {
                 .cameraBuffer(cameraInfo.first)
                 .sampler(linearSampler)
         )
+        val updateBuilder = DescriptorSetUpdateBuilder()
+            .subpassSampler { index -> gColorImages[index].view }
+            .subpassSampler { index -> gPosImages[index].view }
+            .subpassSampler { index -> gNormalImages[index].view }
+            .uniformBuffer(LightBufferObject.SizeOf(MaxLights), { index -> lightBuffers[index] }, false)
+            .subpassSampler { index -> gSpecularImages[index].view }
+
+        for(lightIndex in 0 until MaxShadowCastingLights) {
+            updateBuilder.frameDependentCombinedImageSampler({ index -> shadowMaps[lightIndex][index].view }, linearSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+        }
         lightingShaderDescriptor = createDescriptorSetFromBuilder(
             lightingPipeline.descriptorSetLayouts[0],
-            DescriptorSetUpdateBuilder()
-                .subpassSampler { index -> gColorImages[index].view }
-                .subpassSampler { index -> gPosImages[index].view }
-                .subpassSampler { index -> gNormalImages[index].view }
-                .uniformBuffer(LightBufferObject.SizeOf(MaxLights), { index -> lightBuffers[index] }, false)
-                .subpassSampler { index -> gSpecularImages[index].view }
+            updateBuilder
         )
         noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
         ssaoShaderDescriptor = createDescriptorSetFromBuilder(
@@ -309,14 +321,35 @@ object VulkanRenderingEngine: IRenderEngine {
             ),
             listOf(0u, 1u, 2u, 2u, 3u, 0u), vertexFormat = VertexFormat.Companion.ScreenPositionOnly)
 
-        createCommandBuffers()
+        setupShadowMapping()
+        createSecondaryCommandBuffers()
+        createPrimaryCommandBuffers()
         createSyncingMechanisms()
 
         initSemaphore.release()
     }
 
-    fun buildShadowMappingPipelines() {
+    fun setupShadowMapping() {
         shadowMappingPipelines = (0 until MaxShadowCastingLights).map { createGraphicsPipeline(shadowMapPipelineBuilder(it, shadowCastingLights[it].type)) }
+
+        val descriptors = mutableListOf<DescriptorSet>()
+        val cameras = mutableListOf<CameraObject>()
+        for(i in 0 until MaxShadowCastingLights) {
+            val pipeline = shadowMappingPipelines[i]
+
+            val cameraInfo = prepareUniformBuffers(CameraObject.SizeOf, 1)
+            val lightCamera = CameraObject(cameraInfo.second)
+            val descriptorSet = createDescriptorSetFromBuilder(
+                pipeline.descriptorSetLayouts[0],
+                DescriptorSetUpdateBuilder()
+                    .cameraBuffer(cameraInfo.first)
+            )
+
+            descriptors += descriptorSet
+            cameras += lightCamera
+        }
+        shadowMappingCameraObjects = cameras
+        shadowMappingShaderDescriptors = descriptors
     }
 
     fun useShadowCasting(lights: Collection<Light>) {
@@ -327,7 +360,7 @@ object VulkanRenderingEngine: IRenderEngine {
             shadowCastingLights[i] = light
         }
         nextFrame {
-            buildShadowMappingPipelines()
+            setupShadowMapping()
         }
     }
 
@@ -372,21 +405,31 @@ object VulkanRenderingEngine: IRenderEngine {
         .useStencil(false)
         .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
 
-    private fun lightingPipelineBuilder() = GraphicsPipelineBuilder(1, usualRenderPass, swapchainExtent)
-        .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gLighting.fragc")
-        .descriptorSetLayoutBindings(
-            DescriptorSetLayoutBindings()
-                .subpassSampler() // gColor
-                .subpassSampler() // gPos
-                .subpassSampler() // gNormal
-                .uniformBuffer(false, stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT) // lights
-                .subpassSampler() // gSpecular
+    private fun lightingPipelineBuilder(): GraphicsPipelineBuilder {
+        val bindings = DescriptorSetLayoutBindings()
+            .subpassSampler() // gColor
+            .subpassSampler() // gPos
+            .subpassSampler() // gNormal
+            .uniformBuffer(false, stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT) // lights
+            .subpassSampler() // gSpecular
+
+        for(i in 0 until MaxShadowCastingLights) {
+            bindings.combinedImageSampler() // shadow map #i
+        }
+
+        val builder = GraphicsPipelineBuilder(1, usualRenderPass, swapchainExtent)
+            .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gLighting.fragc")
+            .descriptorSetLayoutBindings(
+                bindings
             )
-        .depthTest(false)
-        .depthWrite(false)
-        .subpass(LightingSubpass)
-        .useStencil(false)
-        .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
+            .depthTest(false)
+            .depthWrite(false)
+            .subpass(LightingSubpass)
+            .useStencil(false)
+            .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
+
+        return builder
+    }
 
     private fun renderToScreenPipelineBuilder() = GraphicsPipelineBuilder(1, usualRenderPass, swapchainExtent)
         .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gResolve.fragc")
@@ -413,12 +456,11 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun shadowMapPipelineBuilder(lightIndex: Int, lightType: LightType) = GraphicsPipelineBuilder(1, shadowMapRenderPass, swapchainExtent)
         .descriptorSetLayoutBindings(DescriptorSetLayoutBindings()
-            .uniformBuffer(false) // light information
-            .uniformBuffer(true) // model information
+            .uniformBuffer(true) // camera information
         )
         .subpass(lightIndex)
-        .vertexShaderModule("/shaders/lightingBase.vertc")
-        .fragmentShaderModule("/shaders/${lightType.shaderName}.fragc")
+        .vertexShaderModule("/shaders/shadowMapping/base.vertc")
+        .fragmentShaderModule("/shaders/shadowMapping/${lightType.shaderName}.fragc")
 
     fun getSSAOMemory(frameIndex: Int): VkDeviceMemory {
         return ssaoMemories[frameIndex]
@@ -613,6 +655,8 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createCamera() {
         defaultCamera = Camera(swapchainExtent.width(), swapchainExtent.height())
         defaultCamera.position.set(0f, 0f, 0f)
+
+        lightCamera = Camera(swapchainExtent.width(), swapchainExtent.height())
     }
 
     private fun createRenderImageViews() {
@@ -642,11 +686,11 @@ object VulkanRenderingEngine: IRenderEngine {
                 attachment.format(depthFormat)
                 attachment.samples(VK_SAMPLE_COUNT_1_BIT)
                 attachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
-                attachment.storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+                attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE)
                 attachment.stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
                 attachment.stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
                 attachment.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
-                attachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                attachment.finalLayout(VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
 
                 val lightPass = subpasses.get(i)
                 lightPass.pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
@@ -721,7 +765,7 @@ object VulkanRenderingEngine: IRenderEngine {
             }
 
             val depthAttachment = attachments.get(depthIndex)
-            depthAttachment.format(findDepthFormat())
+            depthAttachment.format(getDepthFormat())
             depthAttachment.samples(VK_SAMPLE_COUNT_1_BIT)
             depthAttachment.loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
             depthAttachment.storeOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
@@ -934,8 +978,8 @@ object VulkanRenderingEngine: IRenderEngine {
         swapchainFramebuffers = framebuffers
     }
 
-    private fun createCommandPool() {
-        useStack {
+    private fun createCommandPool(): VkCommandPool {
+        return useStack {
             val familyIndices = findQueueFamilies(physicalDevice)
             val poolInfo = VkCommandPoolCreateInfo.callocStack(this)
             poolInfo.sType(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO)
@@ -944,7 +988,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
             val pCommandPool = mallocLong(1)
             vkCreateCommandPool(logicalDevice, poolInfo, Allocator, pCommandPool).checkVKErrors()
-            commandPool = !pCommandPool
+            !pCommandPool
         }
     }
 
@@ -1099,7 +1143,7 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun createDepthResources() {
-        val imageInfo = createAttachmentImageView(findDepthFormat(), swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
+        val imageInfo = createAttachmentImageView(getDepthFormat(), swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
         depthImage = imageInfo.image
         depthImageMemory = imageInfo.memory
         depthImageView = imageInfo.view
@@ -1114,7 +1158,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
     private fun hasStencilComponent(format: VkFormat) = format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT
 
-    private fun findDepthFormat() = findSupportedFormat(VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT)
+    private fun getDepthFormat(): VkFormat {
+        val depthFormat by lazy { findSupportedFormat(VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT) }
+        return depthFormat
+    }
 
     private fun findSupportedFormat(tiling: VkImageTiling, features: VkFormatFeatureFlags, vararg candidates: VkFormat): VkFormat = useStack {
         val props = VkFormatProperties.callocStack(this)
@@ -1407,7 +1454,7 @@ object VulkanRenderingEngine: IRenderEngine {
         // execute command buffer
         submitCommandBuffer(graphicsQueue, commandBuffer)
         vkQueueWaitIdle(graphicsQueue).checkVKErrors()
-        vkFreeCommandBuffers(logicalDevice, commandPool, commandBuffer)
+        vkFreeCommandBuffers(logicalDevice, temporaryCommandPool, commandBuffer)
     }
 
     private fun beginSingleUseCommandBuffer(): VkCommandBuffer {
@@ -1416,7 +1463,7 @@ object VulkanRenderingEngine: IRenderEngine {
             val allocInfo = VkCommandBufferAllocateInfo.callocStack(this)
             allocInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO)
             allocInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-            allocInfo.commandPool(commandPool) // TODO: maybe use a separate pool for temp buffers
+            allocInfo.commandPool(temporaryCommandPool)
             allocInfo.commandBufferCount(1)
 
             val pBuffer = mallocPointer(1)
@@ -1477,23 +1524,41 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createCommandBuffers() {
+    private fun createPrimaryCommandBuffers() {
         val count = swapchainFramebuffers.size
         useStack {
             val allocationInfo = VkCommandBufferAllocateInfo.callocStack(this)
             allocationInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO)
             allocationInfo.commandBufferCount(count)
-            allocationInfo.commandPool(commandPool)
+            allocationInfo.commandPool(primaryCommandPool)
             allocationInfo.level(VK_COMMAND_BUFFER_LEVEL_PRIMARY) // SECONDARY for reuse in other buffers
 
             val pBuffers = mallocPointer(count)
             vkAllocateCommandBuffers(logicalDevice, allocationInfo, pBuffers).checkVKErrors()
-            commandBuffers = pBuffers.it().map { VkCommandBuffer(it, logicalDevice) }
-
+            primaryCommandBuffers = pBuffers.it().map { VkCommandBuffer(it, logicalDevice) }
 
             // recording
-            recordCommandBuffers()
+            recordPrimaryCommandBuffers()
         }
+    }
+
+
+    private fun createSecondaryCommandBuffers() {
+        val count = swapchainFramebuffers.size
+        // secondary buffer
+        useStack {
+            val allocationInfo = VkCommandBufferAllocateInfo.callocStack(this)
+            allocationInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO)
+            allocationInfo.commandBufferCount(count)
+            allocationInfo.commandPool(secondaryCommandPool)
+            allocationInfo.level(VK_COMMAND_BUFFER_LEVEL_SECONDARY) // SECONDARY for reuse in other buffers
+
+            val pBuffers = mallocPointer(count)
+            vkAllocateCommandBuffers(logicalDevice, allocationInfo, pBuffers).checkVKErrors()
+            secondaryCommandBuffers = pBuffers.it().map { VkCommandBuffer(it, logicalDevice) }
+        }
+        // recording
+        recordSecondaryCommandBuffers()
     }
 
     fun requestCommandBufferRecreation() {
@@ -1506,16 +1571,87 @@ object VulkanRenderingEngine: IRenderEngine {
                 }
                 vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
 
-                destroyCommandBuffers()
-                createCommandBuffers()
+                recordSecondaryCommandBuffers()
+                recordPrimaryCommandBuffers()
             }
         }
     }
 
-    private fun recordCommandBuffers() {
-        synchronized(commandBuffers) {
+    private fun recordSecondaryCommandBuffers() {
+        renderBatches.reset()
+
+        scene?.let {
+            it.record(renderBatches)
+        }
+
+        synchronized(secondaryCommandBuffers) {
             useStack {
-                commandBuffers.forEachIndexed { index, commandBuffer ->
+                secondaryCommandBuffers.forEachIndexed { index, commandBuffer ->
+                    val beginInfo = VkCommandBufferBeginInfo.callocStack(this)
+                    beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO)
+                    beginInfo.flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT or VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT)
+
+                    val inheritance = VkCommandBufferInheritanceInfo.callocStack(this)
+                    inheritance.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO)
+                    inheritance.framebuffer(swapchainFramebuffers[index])
+                    inheritance.renderPass(usualRenderPass)
+                    beginInfo.pInheritanceInfo(inheritance)
+
+                    vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
+                    renderBatches.recordAll(commandBuffer, index)
+                    vkEndCommandBuffer(commandBuffer).checkVKErrors()
+                }
+            }
+        }
+    }
+
+    private fun recordShadowMapping(commandBuffer: VkCommandBuffer, index: Int) {
+        useStack {
+            val clearValues = VkClearValue.callocStack(MaxShadowCastingLights, this)
+
+            // one per attachment
+            for(i in 0 until MaxShadowCastingLights) {
+                clearValues.get(i).depthStencil(VkClearDepthStencilValue.callocStack(this).depth(1.0f).stencil(0))
+            }
+
+            val renderPassInfo = VkRenderPassBeginInfo.callocStack(this)
+            renderPassInfo.sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
+            renderPassInfo.renderPass(shadowMapRenderPass)
+            renderPassInfo.framebuffer(shadowMapFramebuffers[index])
+
+            renderPassInfo.renderArea().offset(VkOffset2D.callocStack(this).set(0, 0))
+            renderPassInfo.renderArea().extent(swapchainExtent) // TODO: different extent?
+            renderPassInfo.pClearValues(clearValues)
+
+            // Shadow Mapping Pass
+            vkCmdBeginRenderPass(
+                commandBuffer,
+                renderPassInfo,
+                VK_SUBPASS_CONTENTS_INLINE
+            ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
+
+            fun pass(lightIndex: Int) {
+                val set = mallocLong(1)
+                set.put(0, shadowMappingShaderDescriptors[lightIndex][index])
+                useDescriptorSets(commandBuffer, index, shadowMappingPipelines[lightIndex], shadowMappingShaderDescriptors[lightIndex])
+                renderBatches.recordAll(commandBuffer, lightIndex, shadowMappingPipelines[lightIndex])
+            }
+
+            pass(0)
+
+            for(i in 1 until MaxShadowCastingLights) {
+                vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
+                pass(i)
+            }
+
+            vkCmdEndRenderPass(commandBuffer)
+        }
+    }
+
+    private fun recordPrimaryCommandBuffers() {
+        synchronized(primaryCommandBuffers) {
+            useStack {
+                primaryCommandBuffers.forEachIndexed { index, commandBuffer ->
                     val beginInfo = VkCommandBufferBeginInfo.callocStack(this)
                     beginInfo.sType(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO)
                     beginInfo.flags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT)
@@ -1523,6 +1659,10 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     vkBeginCommandBuffer(commandBuffer, beginInfo).checkVKErrors()
 
+                    // Shadow mapping
+                    recordShadowMapping(commandBuffer, index)
+
+                    // G-Pass and Lighting
                     val clearValues = VkClearValue.callocStack(8, this)
                     // one per attachment
                     clearValues.get(0).color(VkClearColorValue.callocStack(this).float32(floats(0.0f, 0.0f, 0.0f, 1f)))
@@ -1547,16 +1687,17 @@ object VulkanRenderingEngine: IRenderEngine {
                     vkCmdBeginRenderPass(
                         commandBuffer,
                         renderPassInfo,
-                        VK_SUBPASS_CONTENTS_INLINE
+                        VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS
                     ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
-                    renderBatches.reset()
+                  /*  renderBatches.reset()
 
                     scene?.let {
                         it.record(renderBatches)
 
                         renderBatches.recordAll(commandBuffer, index)
-                    }
+                    }*/
+                    vkCmdExecuteCommands(commandBuffer, secondaryCommandBuffers[index])
 
 
                     // Lighting pass
@@ -1602,7 +1743,7 @@ object VulkanRenderingEngine: IRenderEngine {
      * Tells Vulkan to start using the given descriptor sets from now on.
      * Set order is important
      */
-    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, vararg sets: DescriptorSet) {
+    fun useDescriptorSets(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, pipeline: GraphicsPipeline, vararg sets: DescriptorSet) {
         useStack {
             val pSets = mallocLong(sets.size)
             for(i in sets.indices) {
@@ -1615,7 +1756,7 @@ object VulkanRenderingEngine: IRenderEngine {
             vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                gBufferPipeline.layout, // TODO customizable
+                pipeline.layout, // TODO customizable
                 0,
                 pSets,
                 offsets
@@ -1882,7 +2023,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 return@useStack
             }
 
-            updateUniformBuffer(!pImageIndex)
+            updateUniformBuffers(!pImageIndex)
 
             graphicsQueueSubmit(!pImageIndex, currentFrame)
 
@@ -1892,7 +2033,7 @@ object VulkanRenderingEngine: IRenderEngine {
         currentFrame = (currentFrame + 1) % maxFramesInFlight
     }
 
-    private fun updateUniformBuffer(frameIndex: Int) {
+    private fun updateUniformBuffers(frameIndex: Int) {
         var forward = 0f
         var strafe = 0f
         if (glfwGetKey(windowPointer, GLFW_KEY_W) == GLFW_PRESS) {
@@ -1919,6 +2060,14 @@ object VulkanRenderingEngine: IRenderEngine {
 
         defaultCamera.updateCameraObject(cameraObject)
         cameraObject.update(logicalDevice, memoryStack, frameIndex)
+
+        // update shadow mapping views
+        for((i, light) in shadowCastingLights.withIndex()) {
+            val lightCameraObject = shadowMappingCameraObjects[i]
+            light.updateCameraForShadowMapping(lightCamera)
+            lightCamera.updateCameraObject(lightCameraObject)
+            lightCameraObject.update(logicalDevice, memoryStack, frameIndex)
+        }
 
         if(scene != null) {
             scene!!.preRenderFrame(frameIndex, lightBufferObject)
@@ -1955,7 +2104,7 @@ object VulkanRenderingEngine: IRenderEngine {
         submitInfo.pSignalSemaphores(signalSemaphores)
 
         val buffers = mallocPointer(1)
-        buffers.put(commandBuffers[currentFrame].address()).flip()
+        buffers.put(primaryCommandBuffers[currentFrame].address()).flip()
         submitInfo.pCommandBuffers(buffers)
 
         vkResetFences(logicalDevice, inFlightFences[currentFrame])
@@ -1993,10 +2142,16 @@ object VulkanRenderingEngine: IRenderEngine {
         framebufferResized = false
 
         gColorImages.clear()
+        gPosImages.clear()
+        gNormalImages.clear()
+        gSpecularImages.clear()
+        ssaoOutImages.clear()
+        lightingOutImages.clear()
+
         createSwapchain()
         createRenderImageViews()
         createCamera()
-        shadowMapRenderPass = createShadowPass(findDepthFormat())
+        shadowMapRenderPass = createShadowPass(getDepthFormat())
         usualRenderPass = createRenderPass()
         gBufferPipeline = createGraphicsPipeline(gBufferPipelineBuilder())
         renderToScreenPipeline = createGraphicsPipeline(renderToScreenPipelineBuilder())
@@ -2006,7 +2161,8 @@ object VulkanRenderingEngine: IRenderEngine {
         createFramebuffers()
         createShadowMapFramebuffers()
         descriptorPool = createDescriptorPool()
-        createCommandBuffers()
+        createSecondaryCommandBuffers()
+        createPrimaryCommandBuffers()
     }
 
     private fun cleanupSwapchain() {
@@ -2014,24 +2170,59 @@ object VulkanRenderingEngine: IRenderEngine {
         vkFreeMemory(logicalDevice, depthImageMemory, Allocator)
         vkDestroyImage(logicalDevice, depthImage, Allocator)
 
-        swapchainFramebuffers.forEach {
-            vkDestroyFramebuffer(logicalDevice, it, Allocator)
-        }
+        destroyPrimaryCommandBuffers()
+        destroySecondaryCommandBuffers()
 
-        destroyCommandBuffers()
+        destroyImages(gPosImages)
+        destroyImages(gColorImages)
+        destroyImages(gNormalImages)
+        destroyImages(gSpecularImages)
+        destroyImages(lightingOutImages)
+        destroyImages(ssaoOutImages)
 
+        vkDestroyPipeline(logicalDevice, ssaoPipeline.handle, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, ssaoPipeline.layout, Allocator)
+        vkDestroyPipeline(logicalDevice, renderToScreenPipeline.handle, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, renderToScreenPipeline.layout, Allocator)
+        vkDestroyPipeline(logicalDevice, lightingPipeline.handle, Allocator)
+        vkDestroyPipelineLayout(logicalDevice, lightingPipeline.layout, Allocator)
+        vkDestroyPipeline(logicalDevice, gBufferPipeline.handle, Allocator)
         vkDestroyPipelineLayout(logicalDevice, gBufferPipeline.layout, Allocator)
-        vkDestroyRenderPass(logicalDevice, usualRenderPass, Allocator)
 
+        vkDestroyRenderPass(logicalDevice, usualRenderPass, Allocator)
+        if(shadowMapRenderPass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(logicalDevice, shadowMapRenderPass, Allocator)
+        }
         for(view in swapchainImageViews) {
             vkDestroyImageView(logicalDevice, view, Allocator)
+        }
+
+        for(framebuffer in shadowMapFramebuffers) {
+            vkDestroyFramebuffer(logicalDevice, framebuffer, Allocator)
+        }
+        for(framebuffer in swapchainFramebuffers) {
+            vkDestroyFramebuffer(logicalDevice, framebuffer, Allocator)
         }
         vkDestroySwapchainKHR(logicalDevice, swapchain, Allocator)
     }
 
-    private fun destroyCommandBuffers() {
+    private fun destroyImages(images: List<ImageInfo>) {
+        for(img in images) {
+            vkDestroyImageView(logicalDevice, img.view, Allocator)
+            vkFreeMemory(logicalDevice, img.memory, Allocator)
+            vkDestroyImage(logicalDevice, img.image, Allocator)
+        }
+    }
+
+    private fun destroyPrimaryCommandBuffers() {
         useStack {
-            vkResetCommandPool(logicalDevice, commandPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT)
+            vkResetCommandPool(logicalDevice, primaryCommandPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT)
+        }
+    }
+
+    private fun destroySecondaryCommandBuffers() {
+        useStack {
+            vkResetCommandPool(logicalDevice, secondaryCommandPool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT)
         }
     }
 
@@ -2057,6 +2248,13 @@ object VulkanRenderingEngine: IRenderEngine {
         cleanupSwapchain()
 
         vkDestroySampler(logicalDevice, linearSampler, Allocator)
+        vkDestroySampler(logicalDevice, nearestSampler, Allocator)
+        vkDestroyDescriptorPool(logicalDevice, descriptorPool, Allocator)
+
+        vkDestroyCommandPool(logicalDevice, temporaryCommandPool, Allocator)
+        vkDestroyCommandPool(logicalDevice, secondaryCommandPool, Allocator)
+        vkDestroyCommandPool(logicalDevice, primaryCommandPool, Allocator)
+
         for(model in activeModels.values) {
             model.free(logicalDevice)
         }
@@ -2066,7 +2264,6 @@ object VulkanRenderingEngine: IRenderEngine {
             texture.free(logicalDevice)
         }
         activeTextures.clear()
-
 
         for(i in 0 until maxFramesInFlight) {
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], Allocator)
@@ -2218,4 +2415,5 @@ object VulkanRenderingEngine: IRenderEngine {
     fun setLights(lights: List<Light>) {
         lightBufferObject.setLights(lights)
     }
+
 }

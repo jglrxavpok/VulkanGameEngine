@@ -6,6 +6,9 @@ import org.jglrxavpok.engine.render.lighting.Light
 import org.jglrxavpok.engine.render.lighting.LightBufferObject
 import org.joml.Vector3f
 import java.util.*
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * A scene is a collection of Element, it is responsible of dispatching ticks and rendering the elements
@@ -23,9 +26,10 @@ class Scene {
     private val lights = LinkedList<Light>()
     val ambientLighting = Vector3f(0f)
 
-    // TODO: replace with locks
+    private val elementLocks = ReentrantReadWriteLock()
+
     fun addElement(element: Element) {
-        synchronized(elements) {
+        elementLocks.write {
             elements.add(element)
             element.onAdded(this)
             isRenderingDirty = true
@@ -33,7 +37,7 @@ class Scene {
     }
 
     fun record(batches: RenderBatches) {
-        synchronized(elements) {
+        elementLocks.read {
             elements.forEach {
                 it.record(batches)
             }
@@ -41,18 +45,17 @@ class Scene {
     }
 
     fun tickAll(dt: Float) {
-        synchronized(elements) {
-            synchronized(futureActions) {
-                futureActions.forEach {
-                    it()
-                }
-                futureActions.clear()
+        synchronized(futureActions) {
+            futureActions.forEach {
+                it()
             }
-            if(isRenderingDirty) {
-                refreshRendering()
-                isRenderingDirty = false
-            }
-
+            futureActions.clear()
+        }
+        if(isRenderingDirty) {
+            refreshRendering()
+            isRenderingDirty = false
+        }
+        elementLocks.read {
             elements.forEach {
                 it.tick(dt)
             }
@@ -62,7 +65,7 @@ class Scene {
     fun preRenderFrame(frameIndex: Int, lightBufferObject: LightBufferObject) {
         lightBufferObject.viewMatrix.set(VulkanRenderingEngine.defaultCamera.view)
         lightBufferObject.ambientLighting.set(ambientLighting)
-        synchronized(elements) {
+        elementLocks.read {
             elements.forEach {
                 it.preFrameRender(frameIndex)
             }

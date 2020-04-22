@@ -16,16 +16,20 @@ class RenderBatch {
     /**
      * Pipeline used for rendering
      */
-    var pipeline = VulkanRenderingEngine.gBufferPipeline
+    var usualPipeline = VulkanRenderingEngine.gBufferPipeline
 
-    fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
-        VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle)
+    fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, shadowMappingPipeline: GraphicsPipeline? = null) {
+        if(shadowMappingPipeline != null) {
+            VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMappingPipeline.handle)
+        } else {
+            VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, usualPipeline.handle)
 
-        // TODO: this is pipeline dependent!
-        VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Diffuse, VulkanRenderingEngine.WhiteTexture, pipeline.layout)
+            // TODO: this is pipeline dependent!
+            VulkanRenderingEngine.bindTexture(commandBuffer, TextureUsage.Diffuse, VulkanRenderingEngine.WhiteTexture, usualPipeline.layout)
+        }
 
         for((mesh, uboList) in entries) {
-            mesh.instancedRecord(commandBuffer, commandBufferIndex, uboList)
+            mesh.instancedRecord(commandBuffer, commandBufferIndex, uboList, shadowMappingPipeline == null)
         }
     }
 
@@ -56,9 +60,9 @@ class RenderBatches {
         return batches.getOrPut(batchID, ::RenderBatch)
     }
 
-    fun recordAll(commandBuffer: VkCommandBuffer, commandBufferIndex: Int) {
+    fun recordAll(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, shadowMappingPipeline: GraphicsPipeline? = null) {
         for(batch in batches.values) {
-            batch.record(commandBuffer, commandBufferIndex)
+            batch.record(commandBuffer, commandBufferIndex, shadowMappingPipeline)
         }
     }
 

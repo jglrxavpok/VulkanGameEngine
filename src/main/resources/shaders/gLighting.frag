@@ -8,6 +8,7 @@ layout(input_attachment_index = 1, binding = 1) uniform subpassInput gPos;
 layout(input_attachment_index = 2, binding = 2) uniform subpassInput gNormal;
 #include "lighting.glsl.h"
 layout(input_attachment_index = 3, binding = 4) uniform subpassInput gSpecular;
+#include "shadowMapping/bindings.glsl.h"
 
 layout(location = 0) out vec4 outColor;
 
@@ -27,6 +28,10 @@ vec3 computeSpecular(vec3 reflectedColor, float specularIntensity, vec3 fragToEy
 }
 
 void main() {
+    if(true) {
+        outColor = vec4(vec3(texture(shadowMaps[0], fragCoords).x), 1.0);
+        return;
+    }
     vec3 fragPosition = subpassLoad(gPos).xyz;
     vec3 fragNormal = subpassLoad(gNormal).xyz;
     vec3 color = subpassLoad(gColor).rgb;

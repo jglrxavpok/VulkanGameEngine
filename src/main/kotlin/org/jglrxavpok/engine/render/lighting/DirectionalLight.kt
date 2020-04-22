@@ -1,8 +1,12 @@
 package org.jglrxavpok.engine.render.lighting
 
+import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.render.Camera.Companion.AxisY
+import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
+import org.joml.Quaternionf
 import org.joml.Vector3f
 import java.nio.ByteBuffer
 
@@ -24,6 +28,19 @@ open class DirectionalLight: Light() {
         buffer.skip(sizeof<Vector3f>())
 
         buffer.putFloat(intensity)
+    }
+
+    override fun updateCameraForShadowMapping(camera: Camera) {
+        val rot by lazy { Quaternionf() }
+        val angles by lazy { Vector3f() }
+        // TODO: custom size
+        camera.projection.setOrtho(-100f, 100f, -100f, 100f, 0.0001f, 100f)
+        VulkanRenderingEngine.defaultCamera.position.fma(-10f, direction, camera.position)
+
+        rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)
+        camera.yaw = angles.x()
+        camera.pitch = angles.y()
+        camera.roll = angles.z()
     }
 
     object None: DirectionalLight() {

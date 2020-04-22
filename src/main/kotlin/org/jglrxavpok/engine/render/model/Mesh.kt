@@ -69,11 +69,13 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      * Takes care of using the correct texture by binding the correct descriptor set
      * @param ubo allow to modify the UBO when rendering this mesh
      */
-    fun instancedRecord(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubos: List<UniformBufferObject>) {
+    fun instancedRecord(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubos: List<UniformBufferObject>, useMaterial: Boolean) {
         this.instances.clear()
         this.instances += ubos
         useStack {
-            material.prepareDescriptors(commandBuffer, commandBufferIndex)
+            if(useMaterial) {
+                material.prepareDescriptors(commandBuffer, commandBufferIndex)
+            }
 
             directRecord(this, commandBuffer, ubos.size)
         }

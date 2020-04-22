@@ -1,9 +1,6 @@
 package org.jglrxavpok.engine.render
 
-import org.jglrxavpok.engine.VkBuffer
-import org.jglrxavpok.engine.VkDescriptorSet
-import org.jglrxavpok.engine.VkImageView
-import org.jglrxavpok.engine.VkSampler
+import org.jglrxavpok.engine.*
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VK10.*
@@ -144,11 +141,11 @@ class DescriptorSetUpdateBuilder {
         }
     }
 
-    class FrameDependentCombinedImageSamplerBinding(val bindingIndex: Int, val views: (Int) -> VkImageView, val sampler: VkSampler): Binding {
+    class FrameDependentCombinedImageSamplerBinding(val bindingIndex: Int, val views: (Int) -> VkImageView, val sampler: VkSampler, val layout: VkImageLayout): Binding {
         override fun describe(memoryStack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
             val imageInfo = VkDescriptorImageInfo.callocStack(1, memoryStack)
             imageInfo.imageView(views(frameIndex))
-            imageInfo.imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            imageInfo.imageLayout(layout)
             imageInfo.sampler(sampler)
 
             target.dstBinding(bindingIndex) // binding for our sampler
@@ -195,13 +192,13 @@ class DescriptorSetUpdateBuilder {
         return this
     }
 
-    fun frameDependentCombinedImageSampler(samplerViews: (Int) -> VkImageView, sampler: VkSampler): DescriptorSetUpdateBuilder {
-        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), samplerViews, sampler)
+    fun frameDependentCombinedImageSampler(samplerViews: (Int) -> VkImageView, sampler: VkSampler, layout: VkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL): DescriptorSetUpdateBuilder {
+        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), samplerViews, sampler, layout)
         return this
     }
 
-    fun combinedImageSampler(texture: Texture, sampler: VkSampler): DescriptorSetUpdateBuilder {
-        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), { _ -> texture.imageView }, sampler)
+    fun combinedImageSampler(texture: Texture, sampler: VkSampler, layout: VkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL): DescriptorSetUpdateBuilder {
+        bindings += FrameDependentCombinedImageSamplerBinding(nextBindingIndex(), { _ -> texture.imageView }, sampler, layout)
         return this
     }
 
