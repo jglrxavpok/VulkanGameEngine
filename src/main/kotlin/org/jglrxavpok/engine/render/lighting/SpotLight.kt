@@ -1,12 +1,15 @@
 package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.render.Camera.Companion.AxisY
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
+import org.joml.Quaternionf
 import org.joml.Vector3f
 import java.nio.ByteBuffer
 import kotlin.math.cos
+import kotlin.math.sqrt
 
 open class SpotLight: Light(), PositionableLight {
     override val type = LightType.Spot
@@ -45,10 +48,24 @@ open class SpotLight: Light(), PositionableLight {
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
-        camera.projection.identity().perspective((angle/2f).toFloat(), camera.aspectRatio, 0.001f, 1000f)
+        val rot by lazy { Quaternionf() }
+        val angles by lazy { Vector3f() }
+
+        // 256 = c + l * d + q*d*d
+        // 0 = c-att + l *d + q * d²
+        // delta = 4q(c-att)
+        // d1 = (l-2*Math.sqrt(q*(c-att))) / (2q)
+        // d2 = (l+2*Math.sqrt(q*(c-att))) / (2q)
+        val fullAttenuation = 256f
+        val maxDistance = (attenuationLinear+2* sqrt(attenuationQuadratic*(-(attenuationConstant-fullAttenuation)))) / (2*attenuationQuadratic) * intensity
+        camera.projection.setPerspective((angle/2f).toFloat(), 1f, 0.01f, maxDistance, true)
         camera.position.set(position)
 
-        // TODO camera.pitch etc.
+        rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)
+
+        camera.pitch = -angles.x()
+        camera.yaw = -angles.y()
+        camera.roll = angles.z()
     }
 
     object None: SpotLight() {
@@ -59,7 +76,7 @@ open class SpotLight: Light(), PositionableLight {
         override val direction: Vector3f
             get() = Vector3f()
         override var angle: Double
-            get() = 0.0
+            get() = 1.0
             set(value) {}
     }
 

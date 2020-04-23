@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.Descriptor
 import org.jglrxavpok.engine.render.ShaderResource
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
@@ -16,6 +17,7 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
     companion object {
         fun SizeOf(lightingConfiguration: LightingConfiguration): Long =
             (
+                    +sizeof<Matrix4f>() // inverted view
                     +4* sizeof<Float>() // ambient light
                     +lightingConfiguration.directionalLightCount * DirectionalLight.SizeOf
                     +lightingConfiguration.pointLightCount * PointLight.SizeOf
@@ -36,6 +38,11 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
     private var pointLightCount = 0
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
+        val invertedView by lazy { Matrix4f() }
+        viewMatrix.invert(invertedView)
+        invertedView.get(buffer)
+        buffer.skip(sizeof<Matrix4f>())
+
         buffer.putFloat(ambientLighting.x())
         buffer.putFloat(ambientLighting.y())
         buffer.putFloat(ambientLighting.z())

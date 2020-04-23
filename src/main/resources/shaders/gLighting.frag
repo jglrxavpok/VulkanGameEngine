@@ -28,13 +28,27 @@ vec3 computeSpecular(vec3 reflectedColor, float specularIntensity, vec3 fragToEy
 }
 
 void main() {
-    if(true) {
-        outColor = vec4(vec3(texture(shadowMaps[0], fragCoords).x), 1.0);
-        return;
-    }
     vec3 fragPosition = subpassLoad(gPos).xyz;
     vec3 fragNormal = subpassLoad(gNormal).xyz;
     vec3 color = subpassLoad(gColor).rgb;
+
+   // if(true) {
+        mat4 world2shadowMap = worldToProjectedMat.matrices[0].projection * worldToProjectedMat.matrices[0].view;
+
+        vec4 shadowMapPos = world2shadowMap * lights.invertedView * vec4(fragPosition, 1.0);
+        shadowMapPos /= shadowMapPos.w;
+
+        vec2 shadowMapTexCoords = shadowMapPos.xy * 0.5 + 0.5; // NDC to texture coords
+   //     shadowMapPos = vec4(fragCoords, 1.0, 1.0);
+        const float bias = 0.001f;
+        float shadow = 1.0f;
+        if(shadowMapPos.z > -1.0 && shadowMapPos.z < 1.0 && shadowMapTexCoords.x >= 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y >= 0.0 && shadowMapTexCoords.y < 1.0) {
+            float depth = texture(shadowMaps[0], shadowMapTexCoords).z - bias;
+            if(shadowMapPos.w > 0.0 && depth < shadowMapPos.z) {
+                shadow = 0.0f;
+            }
+        }
+    //}
     float specularIntensity = subpassLoad(gSpecular).r;
 
     vec3 lighting = color * lights.ambientLight.color;
@@ -86,12 +100,12 @@ void main() {
         float attenuation = light.attenuationConstant*1+light.attenuationLinear*distance+light.attenuationQuadratic*distance*distance;
         vec3 reflectedColor = color * light.color * light.intensity;
         vec3 diffuse = exposure(fragNormal, lightDir) * reflectedColor/attenuation * spotFactor;
-        lighting += diffuse;
+        lighting += diffuse * shadow;
 
         vec3 reflectedRay = normalize(reflect(lightDir, fragNormal));
         vec3 fragToEye = normalize(-fragPosition);
 
-        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay) * spotFactor;
+        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay) * spotFactor * shadow;
     }
     outColor = vec4(lighting, 1.0);
 }

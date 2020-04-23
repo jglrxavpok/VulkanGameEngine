@@ -16,11 +16,12 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
     var depthWrite = true
     var useStencil = false
     var subpass = 0
-    var descriptorSetLayoutBindings = DescriptorSetLayoutBindings()
+    var descriptorSetLayoutBindings = mutableListOf<DescriptorSetLayoutBindings>()
     var vertexShaderModule: String = "/shaders/default.vertc"
     var vertexShaderEntryPoint: String = "main"
     var fragmentShaderModule: String = "/shaders/default.fragc"
     var fragmentShaderEntryPoint: String = "main"
+    var descriptorSetCount: Int = 1
 
     constructor(attachmentCount: Int, renderPass: VkRenderPass, vkExtent: VkExtent2D): this(attachmentCount, renderPass, Vector2i(vkExtent.width(), vkExtent.height()))
 
@@ -45,7 +46,7 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
     }
 
     fun descriptorSetLayoutBindings(bindings: DescriptorSetLayoutBindings): GraphicsPipelineBuilder {
-        this.descriptorSetLayoutBindings = bindings
+        this.descriptorSetLayoutBindings.add(bindings)
         return this
     }
 
@@ -71,6 +72,11 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
 
     fun vertexFormat(description: VertexFormat): GraphicsPipelineBuilder {
         this.vertexFormat = description
+        return this
+    }
+
+    fun descriptorSetCount(count: Int): GraphicsPipelineBuilder {
+        this.descriptorSetCount = count
         return this
     }
 
@@ -185,25 +191,28 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
             pushConstants[0].size(4*2)
             pipelineLayoutInfo.pPushConstantRanges(pushConstants)
 
-            val bindings = descriptorSetLayoutBindings.calloc(this)
+            val createInfo = VkDescriptorSetLayoutCreateInfo.callocStack(descriptorSetCount, this)
+            val descriptorSetLayouts = this.mallocLong(descriptorSetCount)
 
-            val createInfo = VkDescriptorSetLayoutCreateInfo.callocStack(this)
-            createInfo.sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
-            createInfo.pBindings(bindings)
+            val descriptorSetLayoutsList = mutableListOf<VkDescriptorSetLayout>()
+            for(i in 0 until descriptorSetCount) {
+                createInfo[i].sType(VK10.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO)
+                val bindings = descriptorSetLayoutBindings[i].calloc(this)
+                createInfo[i].pBindings(bindings)
 
-            val pDescriptorSetLayout = this.mallocLong(1)
-            if (VK10.vkCreateDescriptorSetLayout(
-                    VulkanRenderingEngine.logicalDevice,
-                    createInfo,
-                    VulkanRenderingEngine.Allocator,
-                    pDescriptorSetLayout
-                ) != VK10.VK_SUCCESS
-            ) {
-                error("Failed to create descriptor set layout")
+                val pDescriptorSetLayout = this.mallocLong(1)
+                if (VK10.vkCreateDescriptorSetLayout(
+                        VulkanRenderingEngine.logicalDevice,
+                        createInfo[i],
+                        VulkanRenderingEngine.Allocator,
+                        pDescriptorSetLayout
+                    ) != VK10.VK_SUCCESS
+                ) {
+                    error("Failed to create descriptor set layout")
+                }
+                descriptorSetLayouts.put(i, !pDescriptorSetLayout)
+                descriptorSetLayoutsList += !pDescriptorSetLayout
             }
-
-            val descriptorSetLayouts = this.mallocLong(1)
-            descriptorSetLayouts.put(0, !pDescriptorSetLayout)
             pipelineLayoutInfo.pSetLayouts(descriptorSetLayouts)
 
             val pPipelineLayout = this.mallocLong(1)
@@ -252,10 +261,7 @@ class GraphicsPipelineBuilder(val attachmentCount: Int, val renderPass: VkRender
                 pGraphicsPipeline
             ).checkVKErrors()
 
-            val descriptorSetLayoutsList = mutableListOf<VkDescriptorSetLayout>()
-            for (i in 0 until 1) { // TODO: support multiple layouts?
-                descriptorSetLayoutsList += pDescriptorSetLayout[i]
-            }
+
             GraphicsPipeline(!pGraphicsPipeline, !pPipelineLayout, descriptorSetLayoutsList)
         }
 

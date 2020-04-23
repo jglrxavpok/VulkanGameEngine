@@ -18,6 +18,8 @@ class RenderBatch {
      */
     var usualPipeline = VulkanRenderingEngine.gBufferPipeline
 
+    private var startingFrame = true
+
     fun record(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, shadowMappingPipeline: GraphicsPipeline? = null) {
         if(shadowMappingPipeline != null) {
             VK10.vkCmdBindPipeline(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMappingPipeline.handle)
@@ -29,8 +31,16 @@ class RenderBatch {
         }
 
         for((mesh, uboList) in entries) {
-            mesh.instancedRecord(commandBuffer, commandBufferIndex, uboList, shadowMappingPipeline == null)
+            mesh.instancedRecord(commandBuffer, commandBufferIndex, startingFrame, uboList, shadowMappingPipeline == null)
         }
+        startingFrame = false
+    }
+
+    /**
+     * During a single frame, meshes will not update their instance buffers, this method triggers a refresh
+     */
+    fun newFrame() {
+        startingFrame = true
     }
 
     /**
@@ -74,5 +84,9 @@ class RenderBatches {
         batches.values.forEach {
             it.updateInstances(frameIndex)
         }
+    }
+
+    fun newFrame() {
+        batches.values.forEach(RenderBatch::newFrame)
     }
 }

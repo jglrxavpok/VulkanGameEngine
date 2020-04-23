@@ -12,8 +12,9 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet
  * Represents a logical descriptor set
  *
  * 'sets' is the sets used by Vulkan, one per frame in flight
+ * 'dynamicCount' is the number of bindings which require a dynamic offset
  */
-class DescriptorSet(val sets: Array<VkDescriptorSet>) {
+class DescriptorSet(val sets: Array<VkDescriptorSet>, val dynamicCount: Int) {
 
     operator fun get(index: Int): VkDescriptorSet {
         return sets[index]
@@ -66,25 +67,6 @@ class DescriptorSetUpdateBuilder {
 
             target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE)
             target.pImageInfo(imageInfo)
-            target.descriptorCount(1)
-        }
-    }
-
-    /**
-     * Uniform Buffer Object Binding
-     */
-    data class CameraObjectBinding(val buffers: List<VkBuffer>): Binding {
-        override fun describe(stack: MemoryStack, target: VkWriteDescriptorSet, targetSet: VkDescriptorSet, frameIndex: Int) {
-            val bufferInfo = VkDescriptorBufferInfo.callocStack(1, stack)
-            bufferInfo.buffer(buffers[frameIndex])
-            bufferInfo.offset(0)
-            bufferInfo.range(CameraObject.SizeOf)
-
-            target.dstBinding(0) // binding for our UBO
-            target.dstArrayElement(0) // 0 because we are not writing to an array
-
-            target.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)
-            target.pBufferInfo(bufferInfo)
             target.descriptorCount(1)
         }
     }
@@ -168,10 +150,8 @@ class DescriptorSetUpdateBuilder {
     /**
      * Adds a new ubo binding
      */
-    // TODO: merge with uniformBuffer()
     fun cameraBuffer(buffers: List<VkBuffer>): DescriptorSetUpdateBuilder {
-        bindings += CameraObjectBinding(buffers)
-        return this
+        return uniformBuffer(CameraObject.SizeOf, buffers::get, true)
     }
 
     fun uniformBuffer(size: Long, buffers: (Int) -> VkBuffer, dynamic: Boolean): DescriptorSetUpdateBuilder {

@@ -3,6 +3,7 @@ package org.jglrxavpok.engine.render
 import org.jglrxavpok.engine.GameInformation
 import org.jglrxavpok.engine.Version
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.render.VulkanDebug.name
 import org.jglrxavpok.engine.render.lighting.*
 import org.jglrxavpok.engine.render.model.Mesh
 import org.jglrxavpok.engine.render.model.Model
@@ -12,7 +13,6 @@ import org.lwjgl.PointerBuffer
 import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWVulkan
 import org.lwjgl.system.Configuration
-import org.lwjgl.vulkan.VK10.*
 import org.lwjgl.system.MemoryUtil.*
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.*
@@ -28,6 +28,7 @@ import org.lwjgl.vulkan.KHRSwapchain.*
 import java.nio.ByteBuffer
 import org.jglrxavpok.engine.scene.Scene
 import org.lwjgl.stb.STBImage
+import org.lwjgl.vulkan.EXTDebugReport.*
 import org.lwjgl.vulkan.EXTDescriptorIndexing.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT
 import org.lwjgl.vulkan.VK11.*
 import java.nio.LongBuffer
@@ -59,7 +60,8 @@ object VulkanRenderingEngine: IRenderEngine {
     private val maxFramesInFlight = 3
 
     private val validationLayers = listOf("VK_LAYER_LUNARG_standard_validation", "VK_LAYER_LUNARG_monitor")
-    private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME, EXTDebugMarker.VK_EXT_DEBUG_MARKER_EXTENSION_NAME)
+    private val deviceExtensions = listOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
+    private val renderDocExtensions = listOf(EXTDebugMarker.VK_EXT_DEBUG_MARKER_EXTENSION_NAME)
     private val memoryStack = MemoryStack.create(512 * 1024*1024) // 512 MB
 
     // Start of Vulkan objects
@@ -84,6 +86,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
     internal var linearSampler: VkSampler = VK_NULL_HANDLE
     internal var nearestSampler: VkSampler = VK_NULL_HANDLE
+    internal var shadowSampler: VkSampler = VK_NULL_HANDLE
 
     private var depthImage: VkImage = VK_NULL_HANDLE
     private var depthImageMemory: VkDeviceMemory = VK_NULL_HANDLE
@@ -122,10 +125,12 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var noiseTexture: Texture
 
     lateinit var gBufferShaderDescriptor: DescriptorSet
-    lateinit var lightingShaderDescriptor: DescriptorSet
+    lateinit var lightingShaderDescriptorSet0: DescriptorSet
+    lateinit var lightingShaderDescriptorSet1: DescriptorSet
     lateinit var ssaoShaderDescriptor: DescriptorSet
     lateinit var renderToScreenShaderDescriptor: DescriptorSet
     lateinit var emptyDescriptor: DescriptorSet
+    lateinit var shadowMappingMatrices: ShadowMappingMatrices
     private lateinit var ssaoMemories:  List<VkDeviceMemory>
     private lateinit var lightMemories:  List<VkDeviceMemory>
     private val imageViews = Array(TextureUsage.values().size) { mutableMapOf<Int, VkImageView>() }
@@ -137,7 +142,7 @@ object VulkanRenderingEngine: IRenderEngine {
     lateinit var lightingPipeline: GraphicsPipeline
     lateinit var ssaoPipeline: GraphicsPipeline
     lateinit var shadowMappingPipelines: List<GraphicsPipeline>
-    lateinit var shadowMappingShaderDescriptors: List<DescriptorSet>
+    lateinit var shadowMappingShaderDescriptorSets: List<DescriptorSet>
     lateinit var shadowMappingCameraObjects: List<CameraObject>
 
     private val gColorImages = mutableListOf<ImageInfo>()
@@ -158,7 +163,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private val shadowMaps = Array(MaxShadowCastingLights) {
         mutableListOf<ImageInfo>()
     }
-    private val shadowCastingLights: Array<Light> = Array(MaxShadowCastingLights) { SpotLight.None }
+    internal val shadowCastingLights: Array<Light> = Array(MaxShadowCastingLights) { SpotLight.None }
 
     // Render subpasses
     private val GBufferSubpass = 0
@@ -172,7 +177,8 @@ object VulkanRenderingEngine: IRenderEngine {
     /**
      * Initializes the render engine
      */
-    fun init(gameInfo: GameInformation, game: Game, enableValidationLayers: Boolean = true) {
+    fun init(gameInfo: GameInformation, game: Game, enableValidationLayers: Boolean = true, renderDocUsed: Boolean = false) {
+        VulkanDebug.enabled = renderDocUsed
         renderThread = Thread.currentThread()
         Configuration.DEBUG.set(true)
         Configuration.DISABLE_CHECKS.set(false)
@@ -219,7 +225,7 @@ object VulkanRenderingEngine: IRenderEngine {
         }
         createSurface()
         pickGraphicsCard()
-        createLogicalDevice()
+        createLogicalDevice(renderDocUsed)
         createSwapchain()
         createCamera()
         createRenderImageViews()
@@ -230,20 +236,28 @@ object VulkanRenderingEngine: IRenderEngine {
         lightingPipeline = createGraphicsPipeline(lightingPipelineBuilder())
         ssaoPipeline = createGraphicsPipeline(ssaoPipelineBuilder())
         primaryCommandPool = createCommandPool()
+        name(primaryCommandPool, "Primary command pool", VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_POOL_EXT)
         secondaryCommandPool = createCommandPool()
+        name(secondaryCommandPool, "Secondary command pool", VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_POOL_EXT)
         temporaryCommandPool = createCommandPool()
+        name(temporaryCommandPool, "Temporary command pool", VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_POOL_EXT)
         createDepthResources()
         createFramebuffers()
         createShadowMapFramebuffers()
         linearSampler = createTextureSampler(VK_FILTER_LINEAR)
         nearestSampler = createTextureSampler(VK_FILTER_NEAREST)
+        shadowSampler = createTextureSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
         descriptorPool = createDescriptorPool()
+        name(descriptorPool, "Descriptor pool", VK_DEBUG_REPORT_OBJECT_TYPE_DESCRIPTOR_POOL_EXT)
 
         // TODO: custom cameras
         val cameraInfo = prepareUniformBuffers(CameraObject.SizeOf, 1)
         val cameraObjectMemories = cameraInfo.second
 
         cameraObject = CameraObject(cameraObjectMemories)
+
+        val shadowMappingMatrixInfo = prepareUniformBuffers(ShadowMappingMatrices.SizeOf(MaxShadowCastingLights), 1)
+        shadowMappingMatrices = ShadowMappingMatrices(shadowMappingMatrixInfo.second, shadowMappingMatrixInfo.first)
 
         val ssaoInfo = prepareUniformBuffers(SSAOBufferObject.SizeOf(SSAOKernelSize), 1)
         val ssaoBuffers = ssaoInfo.first
@@ -287,11 +301,15 @@ object VulkanRenderingEngine: IRenderEngine {
             .subpassSampler { index -> gSpecularImages[index].view }
 
         for(lightIndex in 0 until MaxShadowCastingLights) {
-            updateBuilder.frameDependentCombinedImageSampler({ index -> shadowMaps[lightIndex][index].view }, linearSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+            updateBuilder.frameDependentCombinedImageSampler({ index -> shadowMaps[lightIndex][index].view }, shadowSampler, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)
         }
-        lightingShaderDescriptor = createDescriptorSetFromBuilder(
+        lightingShaderDescriptorSet0 = createDescriptorSetFromBuilder(
             lightingPipeline.descriptorSetLayouts[0],
             updateBuilder
+        )
+        lightingShaderDescriptorSet1 = createDescriptorSetFromBuilder(
+            lightingPipeline.descriptorSetLayouts[1],
+            DescriptorSetUpdateBuilder().uniformBuffer(ShadowMappingMatrices.SizeOf(MaxShadowCastingLights), shadowMappingMatrixInfo.first::get, true)
         )
         noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
         ssaoShaderDescriptor = createDescriptorSetFromBuilder(
@@ -324,6 +342,7 @@ object VulkanRenderingEngine: IRenderEngine {
         setupShadowMapping()
         createSecondaryCommandBuffers()
         createPrimaryCommandBuffers()
+        recordBuffers()
         createSyncingMechanisms()
 
         initSemaphore.release()
@@ -349,7 +368,7 @@ object VulkanRenderingEngine: IRenderEngine {
             cameras += lightCamera
         }
         shadowMappingCameraObjects = cameras
-        shadowMappingShaderDescriptors = descriptors
+        shadowMappingShaderDescriptorSets = descriptors
     }
 
     fun useShadowCasting(lights: Collection<Light>) {
@@ -417,15 +436,22 @@ object VulkanRenderingEngine: IRenderEngine {
             bindings.combinedImageSampler() // shadow map #i
         }
 
+        val shadowMappingBindings =
+            DescriptorSetLayoutBindings()
+                .uniformBuffer(true, VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
         val builder = GraphicsPipelineBuilder(1, usualRenderPass, swapchainExtent)
             .vertexShaderModule("/shaders/screenQuad.vertc").fragmentShaderModule("/shaders/gLighting.fragc")
             .descriptorSetLayoutBindings(
                 bindings
             )
+            .descriptorSetLayoutBindings(
+                shadowMappingBindings
+            )
             .depthTest(false)
             .depthWrite(false)
             .subpass(LightingSubpass)
             .useStencil(false)
+            .descriptorSetCount(2)
             .vertexFormat(VertexFormat.Companion.ScreenPositionOnly)
 
         return builder
@@ -559,7 +585,7 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createLogicalDevice() {
+    private fun createLogicalDevice(renderDocUsed: Boolean) {
         useStack {
             val indices = findQueueFamilies(physicalDevice)
 
@@ -587,7 +613,8 @@ object VulkanRenderingEngine: IRenderEngine {
             createDeviceInfo.pNext(indexingFeatures.address())
             createDeviceInfo.pEnabledFeatures(usedFeatures)
             createDeviceInfo.pQueueCreateInfos(createQueueInfoBuffer)
-            createDeviceInfo.ppEnabledExtensionNames(createNamesBuffer(deviceExtensions, this))
+            val extensions = deviceExtensions + (if(renderDocUsed) { renderDocExtensions } else emptyList())
+            createDeviceInfo.ppEnabledExtensionNames(createNamesBuffer(extensions, this))
 
             if(enableValidationLayers) {
                 createDeviceInfo.ppEnabledLayerNames(createNamesBuffer(validationLayers, this))
@@ -596,6 +623,7 @@ object VulkanRenderingEngine: IRenderEngine {
             val pDevice = mallocPointer(1)
             vkCreateDevice(physicalDevice, createDeviceInfo, Allocator, pDevice).checkVKErrors()
             logicalDevice = VkDevice(!pDevice, physicalDevice, createDeviceInfo)
+            name(logicalDevice.address(), "Logical Device", EXTDebugReport.VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_EXT)
             fetchQueues(indices)
         }
     }
@@ -662,8 +690,10 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createRenderImageViews() {
         useStack {
             val imageViews = mutableListOf<VkImageView>()
-            for(image in swapchainImages) {
-                imageViews.add(createImageView(image, swapchainFormat))
+            for((index, image) in swapchainImages.withIndex()) {
+                val view = createImageView(image, swapchainFormat)
+                name(view, "Render Image View #$index", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                imageViews.add(view)
             }
             swapchainImageViews = imageViews
         }
@@ -746,21 +776,39 @@ object VulkanRenderingEngine: IRenderEngine {
 
             for(i in swapchainImages.indices) {
                 val gColorInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(gColorInfo.image, "gColor #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(gColorInfo.view, "View of gColor #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(gColorInfo.memory, "Memory of gColor #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 gColorImages += gColorInfo
 
                 val gPosInfo = createAttachmentImageView(VK_FORMAT_R16G16B16A16_SFLOAT, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(gPosInfo.image, "gPos #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(gPosInfo.view, "View of gPos #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(gPosInfo.memory, "Memory of gPos #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 gPosImages += gPosInfo
 
                 val gNormalInfo = createAttachmentImageView(VK_FORMAT_R16G16B16A16_SFLOAT, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(gNormalInfo.image, "gNormal #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(gNormalInfo.view, "View of gNormal #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(gNormalInfo.memory, "Memory of gNormal #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 gNormalImages += gNormalInfo
 
                 val lightingOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(lightingOutInfo.image, "lightingOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(lightingOutInfo.view, "View of lightingOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(lightingOutInfo.memory, "Memory of lightingOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 lightingOutImages += lightingOutInfo
 
                 val ssaoOutInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(ssaoOutInfo.image, "ssaoOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(ssaoOutInfo.view, "View of ssaoOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(ssaoOutInfo.memory, "Memory of ssaoOut #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 ssaoOutImages += ssaoOutInfo
 
                 val gSpecularInfo = createAttachmentImageView(VK_FORMAT_B8G8R8A8_UNORM/*VK_FORMAT_R8_UNORM*/, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
+                name(gSpecularInfo.image, "gSpecular #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT)
+                name(gSpecularInfo.view, "View of gSpecular #$i", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT)
+                name(gSpecularInfo.memory, "Memory of gSpecular #$i", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT)
                 gSpecularImages += gSpecularInfo
             }
 
@@ -941,6 +989,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 val pFramebuffer = mallocLong(1)
                 vkCreateFramebuffer(logicalDevice, framebufferInfo, Allocator, pFramebuffer).checkVKErrors()
+                name(!pFramebuffer, "Shadow map framebuffer #$frameIndex", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT)
                 framebuffers += !pFramebuffer
             }
         }
@@ -972,6 +1021,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 val pFramebuffer = mallocLong(1)
                 vkCreateFramebuffer(logicalDevice, framebufferInfo, Allocator, pFramebuffer).checkVKErrors()
+                name(!pFramebuffer, "Main framebuffer #$frameIndex", VK_DEBUG_REPORT_OBJECT_TYPE_FRAMEBUFFER_EXT)
                 framebuffers += !pFramebuffer
             }
         }
@@ -1033,7 +1083,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 error("Failed to allocate descriptor sets")
             }
             val descriptorSets = swapchainImages.indices.mapIndexed { index, _ -> pSets[index] }
-            val result = DescriptorSet(descriptorSets.toTypedArray())
+            val result = DescriptorSet(descriptorSets.toTypedArray(), builder.bindings.count { it is DescriptorSetUpdateBuilder.UniformBufferBinding && it.dynamic })
             updateDescriptorSet(result, builder)
             result
         }
@@ -1085,7 +1135,7 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun createTextureSampler(filter: Int = VK_FILTER_LINEAR): VkSampler {
+    private fun createTextureSampler(filter: Int = VK_FILTER_LINEAR, addressMode: Int = VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT): VkSampler {
         return useStack {
             val samplerInfo = VkSamplerCreateInfo.callocStack(this)
             samplerInfo.sType(VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO)
@@ -1094,9 +1144,9 @@ object VulkanRenderingEngine: IRenderEngine {
             samplerInfo.magFilter(filter)
             samplerInfo.minFilter(filter)
 
-            samplerInfo.addressModeU(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-            samplerInfo.addressModeV(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-            samplerInfo.addressModeW(VK_SAMPLER_ADDRESS_MODE_REPEAT)
+            samplerInfo.addressModeU(addressMode)
+            samplerInfo.addressModeV(addressMode)
+            samplerInfo.addressModeW(addressMode)
 
             samplerInfo.anisotropyEnable(true)
             samplerInfo.maxAnisotropy(16f) // todo: configurable to configure performance
@@ -1536,9 +1586,6 @@ object VulkanRenderingEngine: IRenderEngine {
             val pBuffers = mallocPointer(count)
             vkAllocateCommandBuffers(logicalDevice, allocationInfo, pBuffers).checkVKErrors()
             primaryCommandBuffers = pBuffers.it().map { VkCommandBuffer(it, logicalDevice) }
-
-            // recording
-            recordPrimaryCommandBuffers()
         }
     }
 
@@ -1557,8 +1604,17 @@ object VulkanRenderingEngine: IRenderEngine {
             vkAllocateCommandBuffers(logicalDevice, allocationInfo, pBuffers).checkVKErrors()
             secondaryCommandBuffers = pBuffers.it().map { VkCommandBuffer(it, logicalDevice) }
         }
-        // recording
+    }
+
+    fun recordBuffers() {
+        renderBatches.reset()
+
+        scene?.let {
+            it.record(renderBatches)
+        }
+
         recordSecondaryCommandBuffers()
+        recordPrimaryCommandBuffers()
     }
 
     fun requestCommandBufferRecreation() {
@@ -1571,19 +1627,12 @@ object VulkanRenderingEngine: IRenderEngine {
                 }
                 vkWaitForFences(logicalDevice, fences, true, Long.MAX_VALUE)
 
-                recordSecondaryCommandBuffers()
-                recordPrimaryCommandBuffers()
+                recordBuffers()
             }
         }
     }
 
     private fun recordSecondaryCommandBuffers() {
-        renderBatches.reset()
-
-        scene?.let {
-            it.record(renderBatches)
-        }
-
         synchronized(secondaryCommandBuffers) {
             useStack {
                 secondaryCommandBuffers.forEachIndexed { index, commandBuffer ->
@@ -1631,9 +1680,7 @@ object VulkanRenderingEngine: IRenderEngine {
             ) // VK_SUBPASS_CONTENTS_INLINE -> primary buffer only
 
             fun pass(lightIndex: Int) {
-                val set = mallocLong(1)
-                set.put(0, shadowMappingShaderDescriptors[lightIndex][index])
-                useDescriptorSets(commandBuffer, index, shadowMappingPipelines[lightIndex], shadowMappingShaderDescriptors[lightIndex])
+                useDescriptorSets(commandBuffer, index, shadowMappingPipelines[lightIndex], shadowMappingShaderDescriptorSets[lightIndex])
                 renderBatches.recordAll(commandBuffer, lightIndex, shadowMappingPipelines[lightIndex])
             }
 
@@ -1702,7 +1749,7 @@ object VulkanRenderingEngine: IRenderEngine {
 
                     // Lighting pass
                     vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
-                    simpleQuadPass(commandBuffer, index, lightingPipeline, lightingShaderDescriptor)
+                    simpleQuadPass(commandBuffer, index, lightingPipeline, lightingShaderDescriptorSet0, lightingShaderDescriptorSet1)
 
                     // SSAO pass
                     vkCmdNextSubpass(commandBuffer, VK_SUBPASS_CONTENTS_INLINE)
@@ -1719,23 +1766,30 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
-    private fun simpleQuadPass(commandBuffer: VkCommandBuffer, index: Int, pipeline: GraphicsPipeline, set: DescriptorSet) {
+    private fun simpleQuadPass(commandBuffer: VkCommandBuffer, frameIndex: Int, pipeline: GraphicsPipeline, vararg sets: DescriptorSet) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle)
 
         useStack {
-            val pSets = mallocLong(1)
-            pSets.put(0, set[index])
+            val pSets = mallocLong(sets.size)
+            for(i in sets.indices) {
+                pSets.put(i, sets[i].sets[frameIndex])
+            }
+            val dynamicOffsetCount = sets.sumBy { it.dynamicCount }
+            val dynamicOffsets = mallocInt(dynamicOffsetCount)
+            for(i in 0 until dynamicOffsetCount) {
+                dynamicOffsets.put(i, 0)
+            }
             vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
                 pipeline.layout,
                 0,
                 pSets,
-                null
+                dynamicOffsets
             )
 
             // TODO: move to secondary buffer
-            screenQuad.directRecord(this, commandBuffer, 1)
+            screenQuad.directRecord(this, commandBuffer, true, 1)
         }
     }
 
@@ -2008,6 +2062,7 @@ object VulkanRenderingEngine: IRenderEngine {
     }
 
     private fun drawFrame() {
+        renderBatches.newFrame()
         performActions()
         if(currentFrame == 0) {
             performLoopActions()
@@ -2061,6 +2116,11 @@ object VulkanRenderingEngine: IRenderEngine {
         defaultCamera.updateCameraObject(cameraObject)
         cameraObject.update(logicalDevice, memoryStack, frameIndex)
 
+        if(scene != null) {
+            scene!!.preRenderFrame(frameIndex, lightBufferObject)
+        }
+        lightBufferObject.update(logicalDevice, memoryStack, frameIndex)
+
         // update shadow mapping views
         for((i, light) in shadowCastingLights.withIndex()) {
             val lightCameraObject = shadowMappingCameraObjects[i]
@@ -2069,9 +2129,8 @@ object VulkanRenderingEngine: IRenderEngine {
             lightCameraObject.update(logicalDevice, memoryStack, frameIndex)
         }
 
-        if(scene != null) {
-            scene!!.preRenderFrame(frameIndex, lightBufferObject)
-        }
+
+        shadowMappingMatrices.update(logicalDevice, memoryStack, frameIndex)
 
         renderBatches.updateInstances(frameIndex)
 
@@ -2080,8 +2139,6 @@ object VulkanRenderingEngine: IRenderEngine {
             ssaoBufferObject.proj.set(defaultCamera.projection)
             ssaoBufferObject.proj.m11(ssaoBufferObject.proj.m11() * -1f)
             ssaoBufferObject.update(logicalDevice, this, frameIndex)
-
-            lightBufferObject.update(logicalDevice, this, frameIndex)
         }
     }
 

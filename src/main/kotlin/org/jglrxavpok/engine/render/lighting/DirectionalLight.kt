@@ -34,12 +34,12 @@ open class DirectionalLight: Light() {
         val rot by lazy { Quaternionf() }
         val angles by lazy { Vector3f() }
         // TODO: custom size
-        camera.projection.setOrtho(-100f, 100f, -100f, 100f, 0.0001f, 100f)
-        VulkanRenderingEngine.defaultCamera.position.fma(-10f, direction, camera.position)
+        camera.projection.setOrtho(-100f, 100f, 100f, -100f, -100f, 100f, true)
+        VulkanRenderingEngine.defaultCamera.position.fma(10f, direction, camera.position)
 
         rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)
-        camera.yaw = angles.x()
-        camera.pitch = angles.y()
+        camera.pitch = angles.x()
+        camera.yaw = angles.y()
         camera.roll = angles.z()
     }
 

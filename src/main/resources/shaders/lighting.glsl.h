@@ -33,6 +33,7 @@ struct SpotLight {
 };
 
 layout(binding = 3) uniform LightBuffer {
+    mat4 invertedView;
     AmbientLight ambientLight;
     PointLight pointLights[MAX_POINT_LIGHTS];
     SpotLight spotLights[MAX_SPOT_LIGHTS];

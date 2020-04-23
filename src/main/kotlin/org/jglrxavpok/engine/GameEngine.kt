@@ -19,13 +19,13 @@ object GameEngine {
     /**
      * Starts up the game engine
      */
-    fun launch(info: GameInformation, game: Game) {
+    fun launch(info: GameInformation, game: Game, renderDocUsed: Boolean = false) {
         this.game = game
 
         openNursery {
             var stop = false
             start {
-                VulkanRenderingEngine.init(info, game, true)
+                VulkanRenderingEngine.init(info, game, true, renderDocUsed)
                 VulkanRenderingEngine.changeThread()
                 VulkanRenderingEngine.loop()
                 VulkanRenderingEngine.cleanup()

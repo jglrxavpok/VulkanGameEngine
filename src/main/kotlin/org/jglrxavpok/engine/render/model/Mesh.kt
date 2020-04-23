@@ -69,15 +69,17 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
      * Takes care of using the correct texture by binding the correct descriptor set
      * @param ubo allow to modify the UBO when rendering this mesh
      */
-    fun instancedRecord(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, ubos: List<UniformBufferObject>, useMaterial: Boolean) {
-        this.instances.clear()
-        this.instances += ubos
+    fun instancedRecord(commandBuffer: VkCommandBuffer, commandBufferIndex: Int, startingFrame: Boolean, ubos: List<UniformBufferObject>, useMaterial: Boolean) {
+        if(startingFrame) {
+            this.instances.clear()
+            this.instances += ubos
+        }
         useStack {
             if(useMaterial) {
                 material.prepareDescriptors(commandBuffer, commandBufferIndex)
             }
 
-            directRecord(this, commandBuffer, ubos.size)
+            directRecord(this, commandBuffer, startingFrame, ubos.size)
         }
     }
 
@@ -130,8 +132,8 @@ class Mesh(val vertices: Collection<Vertex>, val indices: Collection<UInt>, auto
     /**
      * Only performs the recording, without applying the material
      */
-    fun directRecord(stack: MemoryStack, commandBuffer: VkCommandBuffer, instanceCount: Int) {
-        if(canBeInstanced) {
+    fun directRecord(stack: MemoryStack, commandBuffer: VkCommandBuffer, startingFrame: Boolean, instanceCount: Int) {
+        if(canBeInstanced && startingFrame) {
             prepareInstanceBuffer(instanceCount)
         }
         val pVertexBuffers = stack.mallocLong(if(canBeInstanced) 2 else 1)
