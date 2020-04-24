@@ -26,17 +26,12 @@ class ShadowMappingMatrices(val memories: List<VkDeviceMemory>, val buffers: Lis
     override fun write(buffer: ByteBuffer): ByteBuffer {
         val worldToProjected by lazy { Matrix4f() }
         val lights = VulkanRenderingEngine.shadowCastingLights
-        tmpCamera.projection.identity()
-        tmpCamera.view.identity()
-        tmpCamera.position.set(0f)
-        tmpCamera.yaw = 0f
-        tmpCamera.pitch = 0f
-        tmpCamera.roll = 0f
         for(light in lights) {
             light.updateCameraForShadowMapping(tmpCamera)
             tmpCamera.updateMatrices()
 
             //tmpCamera.projection.mul(tmpCamera.view, worldToProjected) // compute world space to NDC
+            tmpCamera.projection.m11(tmpCamera.projection.m11() * -1f)
             tmpCamera.projection.get(buffer)
             buffer.skip(sizeof<Matrix4f>())
             tmpCamera.view.get(buffer)

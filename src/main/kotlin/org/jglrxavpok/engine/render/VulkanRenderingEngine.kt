@@ -309,7 +309,7 @@ object VulkanRenderingEngine: IRenderEngine {
         )
         lightingShaderDescriptorSet1 = createDescriptorSetFromBuilder(
             lightingPipeline.descriptorSetLayouts[1],
-            DescriptorSetUpdateBuilder().uniformBuffer(ShadowMappingMatrices.SizeOf(MaxShadowCastingLights), shadowMappingMatrixInfo.first::get, true)
+            DescriptorSetUpdateBuilder().uniformBuffer(ShadowMappingMatrices.SizeOf(MaxShadowCastingLights), shadowMappingMatrices.buffers::get, true)
         )
         noiseTexture = createNoiseTexture(VkExtent2D.create().set(4, 4))
         ssaoShaderDescriptor = createDescriptorSetFromBuilder(
@@ -1151,7 +1151,7 @@ object VulkanRenderingEngine: IRenderEngine {
             samplerInfo.anisotropyEnable(true)
             samplerInfo.maxAnisotropy(16f) // todo: configurable to configure performance
 
-            samplerInfo.borderColor(VK_BORDER_COLOR_INT_OPAQUE_BLACK)
+            samplerInfo.borderColor(VK10.VK_BORDER_COLOR_INT_OPAQUE_WHITE)
             samplerInfo.unnormalizedCoordinates(false)
 
             samplerInfo.compareEnable(false)

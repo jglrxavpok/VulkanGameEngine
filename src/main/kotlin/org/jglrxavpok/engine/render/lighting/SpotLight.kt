@@ -2,6 +2,7 @@ package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.Camera.Companion.AxisY
+import org.jglrxavpok.engine.render.VulkanRenderingEngine
 import org.jglrxavpok.engine.sizeof
 import org.jglrxavpok.engine.skip
 import org.joml.Matrix4f
@@ -58,7 +59,7 @@ open class SpotLight: Light(), PositionableLight {
         // d2 = (l+2*Math.sqrt(q*(c-att))) / (2q)
         val fullAttenuation = 256f
         val maxDistance = (attenuationLinear+2* sqrt(attenuationQuadratic*(-(attenuationConstant-fullAttenuation)))) / (2*attenuationQuadratic) * intensity
-        camera.projection.setPerspective((angle/2f).toFloat(), 1f, 0.01f, maxDistance, true)
+        camera.projection.set(VulkanRenderingEngine.defaultCamera.projection)//.setPerspective((angle).toFloat(), camera.aspectRatio, 0.01f, maxDistance, true)
         camera.position.set(position)
 
         rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)

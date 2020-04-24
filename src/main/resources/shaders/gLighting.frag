@@ -33,21 +33,38 @@ void main() {
     vec3 color = subpassLoad(gColor).rgb;
 
    // if(true) {
-        mat4 world2shadowMap = worldToProjectedMat.matrices[0].projection * worldToProjectedMat.matrices[0].view;
+        vec4 lightViewPos = worldToProjectedMat.matrices[0].view * lights.invertedView * vec4(fragPosition, 1.0);
+        //lightViewPos.y = -lightViewPos.y;
 
-        vec4 shadowMapPos = world2shadowMap * lights.invertedView * vec4(fragPosition, 1.0);
-        shadowMapPos /= shadowMapPos.w;
+        vec4 shadowMapPos = worldToProjectedMat.matrices[0].projection * lightViewPos;
+        shadowMapPos.xyz /= shadowMapPos.w;
 
         vec2 shadowMapTexCoords = shadowMapPos.xy * 0.5 + 0.5; // NDC to texture coords
    //     shadowMapPos = vec4(fragCoords, 1.0, 1.0);
         const float bias = 0.001f;
         float shadow = 1.0f;
-        if(shadowMapPos.z > -1.0 && shadowMapPos.z < 1.0 && shadowMapTexCoords.x >= 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y >= 0.0 && shadowMapTexCoords.y < 1.0) {
-            float depth = texture(shadowMaps[0], shadowMapTexCoords).z - bias;
-            if(shadowMapPos.w > 0.0 && depth < shadowMapPos.z) {
-                shadow = 0.0f;
+        if(shadowMapPos.z > -1.0 && shadowMapPos.z < 1.0) {
+            float depth = texture(shadowMaps[0], shadowMapTexCoords).r - bias;
+            if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
+                if((shadowMapPos.z-depth)*50 > 0.1) {
+                    shadow = 0.0f;
+                }
+
+                depth = shadowMapPos.z-depth;
+                //depth = (depth-0.95)/0.05;
+                depth *= 100;
+
+               // outColor = vec4(vec3(shadow),1.0);
+             //   return;
             }
+
         }
+/*
+    float factor = texture(shadowMaps[0], fragCoords).r;
+    factor = (factor-0.95)/0.05;
+    outColor = vec4(vec3(factor), 1.0);
+    return;
+    */
     //}
     float specularIntensity = subpassLoad(gSpecular).r;
 

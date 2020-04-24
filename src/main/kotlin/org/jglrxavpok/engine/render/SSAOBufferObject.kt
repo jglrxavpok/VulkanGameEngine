@@ -4,6 +4,7 @@ import org.jglrxavpok.engine.*
 import org.joml.Matrix4f
 import org.joml.Vector2f
 import org.joml.Vector3f
+import org.joml.Vector4f
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import org.lwjgl.vulkan.VK10
@@ -21,7 +22,7 @@ class SSAOBufferObject(val sampleCount: Int): ShaderResource(), Descriptor {
     // TODO: Split into samples and projection matrix buffers
 
     companion object {
-        fun SizeOf(sampleCount: Int) = (sizeof<Matrix4f>() + sizeof<Vector3f>() * sampleCount).toLong()
+        fun SizeOf(sampleCount: Int) = (sizeof<Matrix4f>() + sizeof<Vector4f>() * sampleCount).toLong()
     }
 
     val sizeOf = SizeOf(sampleCount)
@@ -33,7 +34,7 @@ class SSAOBufferObject(val sampleCount: Int): ShaderResource(), Descriptor {
         buffer.skip(16*4)
         for(sample in noiseSamples) {
             sample.get(buffer)
-            buffer.skip(3*4)
+            buffer.skip(4*4)
         }
         return buffer
     }
@@ -43,7 +44,7 @@ class SSAOBufferObject(val sampleCount: Int): ShaderResource(), Descriptor {
         from.skip(16*4)
         for(sample in noiseSamples) {
             sample.set(from)
-            from.skip(3*4)
+            from.skip(4*4)
         }
         return this
     }
