@@ -317,7 +317,7 @@ object VulkanRenderingEngine: IRenderEngine {
             DescriptorSetUpdateBuilder()
                 .frameDependentCombinedImageSampler({ index -> gPosImages[index].view }, linearSampler)
                 .subpassSampler { index -> gNormalImages[index].view } //.frameDependentCombinedImageSampler({ index -> gNormalImages[index].view }, nearestSampler)
-                .combinedImageSampler(noiseTexture, nearestSampler)
+                .combinedImageSampler(noiseTexture, linearSampler)
                 .uniformBuffer(SSAOBufferObject.SizeOf(SSAOKernelSize), ssaoBuffers::get, dynamic = false)
 
         )
@@ -1230,7 +1230,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private fun createTextureImage(path: String, pImage: LongBuffer, pImageMemory: LongBuffer) {
         useStack {
             // read file bytes
-            val textureData = javaClass.getResource(path).readBytes()
+            val textureData = (javaClass.getResource(path) ?: error("Could not open file $path")).readBytes()
             val textureDataBuffer = malloc(textureData.size)
             textureDataBuffer.put(textureData)
             textureDataBuffer.position(0)
@@ -2105,10 +2105,19 @@ object VulkanRenderingEngine: IRenderEngine {
             strafe -= 1f
         }
 
+        var up = 0f
+        if (glfwGetKey(windowPointer, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            up += 1f
+        }
+        if (glfwGetKey(windowPointer, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+            up -= 1f
+        }
+
         val direction by lazy { Vector3f() }
-        if (strafe != 0f || forward != 0f) {
+        if (strafe != 0f || forward != 0f || up != 0f) {
             direction.set(-strafe, 0f, forward)
             direction/*.normalize()*/.rotateAxis(defaultCamera.yaw, 0f, 1f, 0f)
+            direction.y = up
             val speed = 0.01f
             direction.mul(speed)
             defaultCamera.position.add(direction)

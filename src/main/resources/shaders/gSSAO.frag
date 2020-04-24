@@ -1,8 +1,9 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 layout (constant_id = 0) const int SAMPLE_COUNT = 16;
-layout (constant_id = 1) const float RADIUS = 0.30;
-layout (constant_id = 2) const float BIAS = 0.025;
+layout (constant_id = 1) const float RADIUS = 0.05;
+layout (constant_id = 2) const float BIAS = 0.0125;
+layout (constant_id = 3) const float SSAO_POWER = 2;
 const vec2 noiseScale = vec2(1920.0/4.0, 1080.0/4.0);
 
 layout(location = 0) in vec2 fragPos;
@@ -24,7 +25,7 @@ void main() {
     vec3 fragViewPos   = texture(gPos, coords).xyz;
 
     // Gram-Schmidt process: create an orthogonal basis
-    vec3 normal    = -normalize(subpassLoad(gNormal).xyz);
+    vec3 normal    = normalize(subpassLoad(gNormal).xyz);
     vec3 randomVec = normalize(texture(noise, coords*noiseScale).xyz);
     vec3 tangent   = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);
@@ -38,8 +39,8 @@ void main() {
 
         vec4 offset = vec4(kernelSample, 1.0);
         offset      = ubo.projection * offset;    // from view to clip-space
-        offset.xyz /= offset.w;               // perspective divide
-        offset.xyz  = offset.xyz * 0.5 + 0.5; // transform to range 0.0 - 1.0
+        offset.xy /= offset.w;               // perspective divide
+        offset.xy  = offset.xy * 0.5 + 0.5; // transform to range 0.0 - 1.0
 
         float sampleDepth = texture(gPos, offset.xy).z;
         float rangeCheck = smoothstep(0.0, 1.0, RADIUS / abs(fragViewPos.z - sampleDepth));
@@ -47,5 +48,6 @@ void main() {
     }
 
     float factor = (occlusion / SAMPLE_COUNT);
+    factor = 1.0-pow(1.0-factor, SSAO_POWER);
     ssaoFactor = vec4(1.0-factor, 0.0, 0.0, 1.0);
 }
