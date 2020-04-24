@@ -41,9 +41,9 @@ void main() {
         const float bias = 0.001f;
         float shadow = 1.0f;
         if(shadowMapPos.z > 0.0 && shadowMapPos.z < 1.0) {
-            float depth = texture(shadowMaps[0], shadowMapTexCoords).r; - bias;
+            float depth = texture(shadowMaps[0], shadowMapTexCoords).r;
             if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
-                if((shadowMapPos.z-depth) > 0.0005) {
+                if((shadowMapPos.z-depth) > bias) {
                     shadow = 0.0f;
                 }
             }
