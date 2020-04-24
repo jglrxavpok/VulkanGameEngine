@@ -45,7 +45,7 @@ open class SpotLight: Light(), PositionableLight {
         buffer.putFloat(attenuationLinear)
         buffer.putFloat(attenuationQuadratic)
 
-        buffer.putFloat(-1f) // padding
+        buffer.putInt(shadowMapIndex)
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
@@ -79,6 +79,10 @@ open class SpotLight: Light(), PositionableLight {
         override var angle: Double
             get() = 1.0
             set(value) {}
+
+        override var shadowMapIndex: Int
+            get() = -1
+            set(value) {}
     }
 
     companion object {
@@ -90,6 +94,6 @@ open class SpotLight: Light(), PositionableLight {
             sizeof<Vector3f>() + // color
             sizeof<Float>() + // intensity
             3*sizeof<Float>() +// attenuation model
-            sizeof<Float>() // padding
+            sizeof<Int>() // shadowMap index
     }
 }

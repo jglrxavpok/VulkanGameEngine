@@ -27,33 +27,42 @@ vec3 computeSpecular(vec3 reflectedColor, float specularIntensity, vec3 fragToEy
     return vec3(0.0);
 }
 
+float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex) {
+    if(shadowMapIndex < 0 || shadowMapIndex >= MAX_SHADOW_MAPS) {
+        return 1.0f;
+    }
+    vec4 lightViewPos = worldToProjectedMat.matrices[shadowMapIndex].view * lights.invertedView * vec4(fragPositionInViewSpace, 1.0);
+
+    vec4 shadowMapPos = worldToProjectedMat.matrices[shadowMapIndex].projection * lightViewPos;
+    shadowMapPos.xyz /= shadowMapPos.w;
+
+    vec2 shadowMapTexCoords = shadowMapPos.xy * 0.5 + 0.5; // NDC to texture coords
+    const float bias = 0.001f;
+    float shadow = 1.0f;
+    if(shadowMapPos.z > 0.0 && shadowMapPos.z < 1.0) {
+        float depth = texture(shadowMaps[shadowMapIndex], shadowMapTexCoords).r;
+        if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
+            if((shadowMapPos.z-depth) > bias) {
+                shadow = 0.0f;
+            }
+        }
+    }
+
+    return shadow;
+}
+
 void main() {
     vec3 fragPosition = subpassLoad(gPos).xyz;
     vec3 fragNormal = subpassLoad(gNormal).xyz;
     vec3 color = subpassLoad(gColor).rgb;
 
-        vec4 lightViewPos = worldToProjectedMat.matrices[0].view * lights.invertedView * vec4(fragPosition, 1.0);
-
-        vec4 shadowMapPos = worldToProjectedMat.matrices[0].projection * lightViewPos;
-        shadowMapPos.xyz /= shadowMapPos.w;
-
-        vec2 shadowMapTexCoords = shadowMapPos.xy * 0.5 + 0.5; // NDC to texture coords
-        const float bias = 0.001f;
-        float shadow = 1.0f;
-        if(shadowMapPos.z > 0.0 && shadowMapPos.z < 1.0) {
-            float depth = texture(shadowMaps[0], shadowMapTexCoords).r;
-            if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
-                if((shadowMapPos.z-depth) > bias) {
-                    shadow = 0.0f;
-                }
-            }
-
-        }
     float specularIntensity = subpassLoad(gSpecular).r;
 
     vec3 lighting = color * lights.ambientLight.color;
     for(int i = 0; i < lights.pointLightCount; i++) {
         PointLight light = lights.pointLights[i];
+
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);
@@ -61,29 +70,34 @@ void main() {
         float attenuation = light.attenuationConstant*1+light.attenuationLinear*distance+light.attenuationQuadratic*distance*distance;
         vec3 reflectedColor = color * light.color * light.intensity;
         vec3 diffuse = exposure(fragNormal, lightDir) * reflectedColor/attenuation;
-        lighting += diffuse;
+        lighting += diffuse * shadow;
 
         vec3 reflectedRay = normalize(reflect(lightDir, fragNormal));
         vec3 fragToEye = normalize(-fragPosition);
 
-        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay);
+        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay) * shadow;
     }
     for(int i = 0; i < lights.directionalLightCount; i++) {
         DirectionalLight light = lights.directionalLights[i];
 
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
+
         vec3 lightDir = normalize(light.viewDirection);
         vec3 reflectedColor = color * light.color * light.intensity;
         vec3 diffuse = exposure(fragNormal, lightDir) * reflectedColor;
-        lighting += diffuse;
+        lighting += diffuse * shadow;
 
         vec3 reflectedRay = normalize(reflect(lightDir, fragNormal));
         vec3 fragToEye = normalize(-fragPosition);
 
-        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay);
+        lighting += computeSpecular(reflectedColor, specularIntensity, fragToEye, reflectedRay) * shadow;
     }
 
     for(int i = 0; i < lights.spotLightCount; i++) {
         SpotLight light = lights.spotLights[i];
+
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
+
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);
 

@@ -6,7 +6,12 @@ import java.nio.ByteBuffer
 
 abstract class Light {
     abstract val type: LightType
-    var intensity: Float = 1f
+    open var intensity: Float = 1f
+
+    /**
+     * Index into the shadow mapping lights array. -1 denotes that this light does not produce shadow maps
+     */
+    open var shadowMapIndex: Int = -1
 
     abstract fun write(buffer: ByteBuffer, viewMatrix: Matrix4f)
 

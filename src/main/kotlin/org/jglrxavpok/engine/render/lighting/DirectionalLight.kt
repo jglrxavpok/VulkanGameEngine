@@ -28,6 +28,12 @@ open class DirectionalLight: Light() {
         buffer.skip(sizeof<Vector3f>())
 
         buffer.putFloat(intensity)
+        buffer.putInt(shadowMapIndex)
+
+        // padding
+        buffer.putInt(-1)
+        buffer.putInt(-1)
+        buffer.putInt(-1)
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
@@ -48,6 +54,10 @@ open class DirectionalLight: Light() {
             get() = Vector3f()
         override val color: Vector3f
             get() = Vector3f()
+
+        override var shadowMapIndex: Int
+            get() = -1
+            set(value) {}
     }
 
     companion object {
@@ -55,7 +65,12 @@ open class DirectionalLight: Light() {
             sizeof<Vector3f>() + // direction
                     sizeof<Float>() + // padding
                     sizeof<Vector3f>() + // color
-                    sizeof<Float>() // intensity
+                    sizeof<Float>() +// intensity
+                    sizeof<Int>() +// shadow map index
+                    3*sizeof<Int>()// padding
+
+
+
     }
 
 }

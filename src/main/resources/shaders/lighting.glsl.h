@@ -13,12 +13,14 @@ struct PointLight {
     float attenuationConstant;
     float attenuationLinear;
     float attenuationQuadratic;
+    int shadowMapIndex;
 };
 
 struct DirectionalLight {
     vec3 viewDirection;
     vec3 color;
     float intensity;
+    int shadowMapIndex;
 };
 
 struct SpotLight {
@@ -30,6 +32,7 @@ struct SpotLight {
     float attenuationConstant;
     float attenuationLinear;
     float attenuationQuadratic;
+    int shadowMapIndex;
 };
 
 layout(binding = 3) uniform LightBuffer {

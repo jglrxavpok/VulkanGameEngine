@@ -34,7 +34,7 @@ open class PointLight: Light(), PositionableLight {
         buffer.putFloat(attenuationLinear)
         buffer.putFloat(attenuationQuadratic)
 
-        buffer.putFloat(-1f) // padding
+        buffer.putInt(shadowMapIndex)
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
@@ -46,6 +46,10 @@ open class PointLight: Light(), PositionableLight {
             get() = Vector3f()
         override val color: Vector3f
             get() = Vector3f()
+
+        override var shadowMapIndex: Int
+            get() = -1
+            set(value) {}
     }
 
     companion object {
@@ -55,6 +59,6 @@ open class PointLight: Light(), PositionableLight {
                     sizeof<Vector3f>() + // color
                     sizeof<Float>() + // intensity
                     3*sizeof<Float>() +// attenuation model
-                    sizeof<Float>() // padding
+                    sizeof<Int>() // shadow map index
     }
 }

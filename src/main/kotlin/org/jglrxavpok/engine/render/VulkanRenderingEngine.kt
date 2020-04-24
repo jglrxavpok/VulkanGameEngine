@@ -378,6 +378,7 @@ object VulkanRenderingEngine: IRenderEngine {
         for((i, light) in lights.withIndex()) {
             shadowCastingLights[i] = light
         }
+        updateShadowMapIndices()
         nextFrame {
             setupShadowMapping()
         }
@@ -2469,8 +2470,16 @@ object VulkanRenderingEngine: IRenderEngine {
         }
     }
 
+    fun updateShadowMapIndices() {
+        lightBufferObject.resetShadowMapIndices()
+        shadowCastingLights.forEachIndexed { index, light ->
+            light.shadowMapIndex = index
+        }
+    }
+
     fun setLights(lights: List<Light>) {
         lightBufferObject.setLights(lights)
+        updateShadowMapIndices()
     }
 
 }

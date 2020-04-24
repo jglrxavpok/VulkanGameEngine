@@ -22,7 +22,7 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
                     +lightingConfiguration.directionalLightCount * DirectionalLight.SizeOf
                     +lightingConfiguration.pointLightCount * PointLight.SizeOf
                     +lightingConfiguration.spotLightCount * SpotLight.SizeOf
-                    +3* sizeof<Int>() + sizeof<Int>() // light counts + padding
+                    +3* sizeof<Int>()// light counts
             ).toLong()
     }
 
@@ -59,7 +59,6 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
         buffer.putInt(pointLightCount)
         buffer.putInt(spotLightCount)
         buffer.putInt(directionalLightCount)
-        buffer.putInt(-1) // padding
         return buffer
     }
 
@@ -91,4 +90,11 @@ class LightBufferObject(val lightingConfiguration: LightingConfiguration): Shade
         spotLightCount = spotCursor
         directionalLightCount = directionalCursor
     }
+
+    fun resetShadowMapIndices() {
+        spotLights.forEach { it.shadowMapIndex = -1 }
+        directionalLights.forEach { it.shadowMapIndex = -1 }
+        pointLights.forEach { it.shadowMapIndex = -1 }
+    }
+
 }
