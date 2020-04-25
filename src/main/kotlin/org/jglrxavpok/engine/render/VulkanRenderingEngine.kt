@@ -96,6 +96,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
     private lateinit var inFlightFences: List<VkFence>
     private lateinit var swapchainExtent: VkExtent2D
+    private lateinit var shadowMapExtent: VkExtent2D
     private lateinit var swapchainImages: List<VkImage>
     private lateinit var swapchainImageViews: List<VkImageView>
     private lateinit var swapchainFramebuffers: List<VkFramebuffer>
@@ -226,6 +227,7 @@ object VulkanRenderingEngine: IRenderEngine {
         createSurface()
         pickGraphicsCard()
         createLogicalDevice(renderDocUsed)
+        shadowMapExtent = VkExtent2D.create().set(2048,2048)
         createSwapchain()
         createCamera()
         createRenderImageViews()
@@ -481,7 +483,7 @@ object VulkanRenderingEngine: IRenderEngine {
         .vertexShaderModule("/shaders/gBuffer.vertc")
         .fragmentShaderModule("/shaders/gBuffer.fragc")
 
-    private fun shadowMapPipelineBuilder(lightIndex: Int, lightType: LightType) = GraphicsPipelineBuilder(1, shadowMapRenderPass, swapchainExtent)
+    private fun shadowMapPipelineBuilder(lightIndex: Int, lightType: LightType) = GraphicsPipelineBuilder(1, shadowMapRenderPass, shadowMapExtent)
         .descriptorSetLayoutBindings(DescriptorSetLayoutBindings()
             .uniformBuffer(true) // camera information
         )
@@ -685,7 +687,7 @@ object VulkanRenderingEngine: IRenderEngine {
         defaultCamera = Camera(swapchainExtent.width(), swapchainExtent.height())
         defaultCamera.position.set(0f, 0f, 0f)
 
-        lightCamera = Camera(swapchainExtent.width(), swapchainExtent.height())
+        lightCamera = Camera(shadowMapExtent.width(), shadowMapExtent.height())
     }
 
     private fun createRenderImageViews() {
@@ -710,7 +712,7 @@ object VulkanRenderingEngine: IRenderEngine {
                 val attachment = attachments.get(i)
 
                 for(frameIndex in swapchainImages.indices) {
-                    val shadowMapInfo = createAttachmentImageView(depthFormat, swapchainExtent.width(), swapchainExtent.height(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
+                    val shadowMapInfo = createAttachmentImageView(depthFormat, shadowMapExtent.width(), shadowMapExtent.height(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT or VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT or VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)
                     shadowMaps[i].add(shadowMapInfo)
                 }
 
@@ -982,8 +984,8 @@ object VulkanRenderingEngine: IRenderEngine {
 
                 val framebufferInfo = VkFramebufferCreateInfo.callocStack(this)
                 framebufferInfo.sType(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO)
-                framebufferInfo.width(swapchainExtent.width())
-                framebufferInfo.height(swapchainExtent.height())
+                framebufferInfo.width(shadowMapExtent.width())
+                framebufferInfo.height(shadowMapExtent.height())
                 framebufferInfo.layers(1)
                 framebufferInfo.pAttachments(attachments)
                 framebufferInfo.renderPass(shadowMapRenderPass)
@@ -1670,7 +1672,7 @@ object VulkanRenderingEngine: IRenderEngine {
             renderPassInfo.framebuffer(shadowMapFramebuffers[index])
 
             renderPassInfo.renderArea().offset(VkOffset2D.callocStack(this).set(0, 0))
-            renderPassInfo.renderArea().extent(swapchainExtent) // TODO: different extent?
+            renderPassInfo.renderArea().extent(shadowMapExtent)
             renderPassInfo.pClearValues(clearValues)
 
             // Shadow Mapping Pass

@@ -37,16 +37,13 @@ open class DirectionalLight: Light() {
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
-        val rot by lazy { Quaternionf() }
-        val angles by lazy { Vector3f() }
         // TODO: custom size
-        camera.projection.setOrtho(-100f, 100f, 100f, -100f, -100f, 100f, true)
-        VulkanRenderingEngine.defaultCamera.position.fma(10f, direction, camera.position)
+        val frustumSize = 50f
+        camera.projection.setOrtho(-frustumSize, frustumSize, frustumSize, -frustumSize, 0f, frustumSize, true)
+        VulkanRenderingEngine.defaultCamera.position.fma(-5f, direction, camera.position)
 
-        rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)
-        camera.pitch = angles.x()
-        camera.yaw = angles.y()
-        camera.roll = angles.z()
+        camera.useEulerAngles = false
+        camera.rotation.identity().lookAlong(direction, AxisY)
     }
 
     object None: DirectionalLight() {

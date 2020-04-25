@@ -26,11 +26,19 @@ class Camera(val aspectRatio: Float) {
     var pitch = 0f
     var roll = 0f
     var yaw = 0f
+    val rotation = Quaternionf()
+    var useEulerAngles = true
+
+    fun computeRotation(): Quaternionf {
+        if(useEulerAngles) {
+            rotation.identity().rotateY(yaw).rotateX(pitch).rotateZ(roll).conjugate()
+        }
+        return rotation
+    }
 
     fun updateMatrices() {
-        val rot by lazy { Quaternionf() }
-        rot.identity().rotateY(yaw).rotateX(pitch).rotateZ(roll).conjugate()
-        view.identity().rotate(rot).translate(-position.x(), -position.y(), -position.z())
+        val rotation = computeRotation()
+        view.identity().rotate(rotation).translate(-position.x(), -position.y(), -position.z())
     }
 
     /**

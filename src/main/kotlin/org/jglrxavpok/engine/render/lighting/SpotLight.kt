@@ -49,9 +49,6 @@ open class SpotLight: Light(), PositionableLight {
     }
 
     override fun updateCameraForShadowMapping(camera: Camera) {
-        val rot by lazy { Quaternionf() }
-        val angles by lazy { Vector3f() }
-
         // 256 = c + l * d + q*d*d
         // 0 = c-att + l *d + q * d²
         // delta = 4q(c-att)
@@ -62,11 +59,8 @@ open class SpotLight: Light(), PositionableLight {
         camera.projection.setPerspective((angle).toFloat(), camera.aspectRatio, 0.01f, maxDistance, true)
         camera.position.set(position)
 
-        rot.identity().lookAlong(direction, AxisY).getEulerAnglesXYZ(angles)
-
-        camera.pitch = -angles.x()
-        camera.yaw = -angles.y()
-        camera.roll = angles.z()
+        camera.useEulerAngles = false
+        camera.rotation.identity().lookAlong(direction, AxisY)
     }
 
     object None: SpotLight() {
