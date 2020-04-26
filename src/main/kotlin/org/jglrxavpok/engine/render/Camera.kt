@@ -14,12 +14,27 @@ class Camera(val aspectRatio: Float) {
         val UpAxis = Vector3f(0f, 1f, 0f)
         val AxisY = Vector3f(0f, 1f, 0f)
         val AxisZ = Vector3f(0f, 0f, 1f)
+
+        val FrustumCorners: Array<Vector3fc> = arrayOf(
+            Vector3f(-1f, +1f, -1f),
+            Vector3f(+1f, +1f, -1f),
+            Vector3f(+1f, -1f, -1f),
+            Vector3f(-1f, -1f, -1f),
+
+            Vector3f(-1f, +1f, 1f),
+            Vector3f(+1f, +1f, 1f),
+            Vector3f(+1f, -1f, 1f),
+            Vector3f(-1f, -1f, 1f)
+        )
+
+        val DefaultNear = 0.01f
+        val DefaultFar = 50f
     }
 
     constructor(swapchainWidth: Int, swapchainHeight: Int): this(swapchainWidth.toFloat() / swapchainHeight)
 
     val view = Matrix4f().identity().lookAt(Vector3f(0f, 15f, 0f), Vector3f(0f, 0f, 0f), Vector3f(0f, 1f, 0f))
-    val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), aspectRatio, 0.01f, 1000f, true)
+    val projection = Matrix4f().identity().perspective((Math.PI/4f).toFloat(), aspectRatio, DefaultNear, DefaultFar, true)
     val forward: Vector3fc get()= Vector3f().set(-view.m02(), -view.m12(), -view.m22())
 
     val position = Vector3f()

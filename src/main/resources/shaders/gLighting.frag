@@ -27,11 +27,16 @@ vec3 computeSpecular(vec3 reflectedColor, float specularIntensity, vec3 fragToEy
     return vec3(0.0);
 }
 
-int adjustOffset(int baseShadowMapIndex, vec4 shadowMapPos, int lightType) {
+int adjustOffset(vec3 fragPositionInViewSpace, int baseShadowMapIndex, int lightType, float[4] cascadeSplits) {
     switch(lightType) {
         case TYPE_DIRECTIONAL:
-            // TODO
-            return baseShadowMapIndex;
+            int cascade = 0;
+            for(int i = 0; i < 3; i++) {
+                if(fragPositionInViewSpace.z < cascadeSplits[i]) {
+                    cascade = i+1;
+                }
+            }
+            return baseShadowMapIndex+cascade;
 
         case TYPE_POINT:
             // TODO
@@ -45,21 +50,23 @@ int adjustOffset(int baseShadowMapIndex, vec4 shadowMapPos, int lightType) {
     }
 }
 
-float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex, int lightType) {
+float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex, int lightType, float[4] cascadeSplits) {
+
     if(shadowMapIndex < 0 || shadowMapIndex >= MAX_SHADOW_MAPS) {
         return 1.0f;
     }
-    vec4 lightViewPos = worldToProjectedMat.matrices[shadowMapIndex].view * lights.invertedView * vec4(fragPositionInViewSpace, 1.0);
+    int actualIndex = adjustOffset(fragPositionInViewSpace, shadowMapIndex, lightType, cascadeSplits);
 
-    vec4 shadowMapPos = worldToProjectedMat.matrices[shadowMapIndex].projection * lightViewPos;
+    vec4 lightViewPos = worldToProjectedMat.matrices[actualIndex].view * lights.invertedView * vec4(fragPositionInViewSpace, 1.0);
+
+    vec4 shadowMapPos = worldToProjectedMat.matrices[actualIndex].projection * lightViewPos;
     shadowMapPos.xyz /= shadowMapPos.w;
 
     vec2 shadowMapTexCoords = shadowMapPos.xy * 0.5 + 0.5; // NDC to texture coords
     const float bias = 0.001f;
     float shadow = 1.0f;
     if(shadowMapPos.z > 0.0 && shadowMapPos.z < 1.0) {
-        int actualIndex = adjustOffset(shadowMapIndex, shadowMapPos, lightType);
-        float depth = texture(shadowMaps[shadowMapIndex], shadowMapTexCoords).r;
+        float depth = texture(shadowMaps[actualIndex], shadowMapTexCoords).r;
         if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
             if((shadowMapPos.z-depth) > bias) {
                 shadow = 0.0f;
@@ -69,6 +76,8 @@ float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex, int lightType
 
     return shadow;
 }
+
+float noCascades[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 void main() {
     vec3 fragPosition = subpassLoad(gPos).xyz;
@@ -81,7 +90,7 @@ void main() {
     for(int i = 0; i < lights.pointLightCount; i++) {
         PointLight light = lights.pointLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_POINT);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_POINT, noCascades);
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);
@@ -99,7 +108,7 @@ void main() {
     for(int i = 0; i < lights.directionalLightCount; i++) {
         DirectionalLight light = lights.directionalLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_DIRECTIONAL);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_DIRECTIONAL, light.cascadeSplits);
 
         vec3 lightDir = normalize(light.viewDirection);
         vec3 reflectedColor = color * light.color * light.intensity;
@@ -115,7 +124,7 @@ void main() {
     for(int i = 0; i < lights.spotLightCount; i++) {
         SpotLight light = lights.spotLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_SPOT);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_SPOT, noCascades);
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);

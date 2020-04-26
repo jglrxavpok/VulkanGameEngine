@@ -97,7 +97,7 @@ object VulkanRenderingEngine: IRenderEngine {
     private lateinit var renderFinishedSemaphores: List<VkSemaphore>
     private lateinit var inFlightFences: List<VkFence>
     private lateinit var swapchainExtent: VkExtent2D
-    private lateinit var shadowMapExtent: VkExtent2D
+    private var shadowMapExtent: VkExtent2D = VkExtent2D.create().set(2048,2048)
     private lateinit var swapchainImages: List<VkImage>
     private lateinit var swapchainImageViews: List<VkImageView>
     private lateinit var swapchainFramebuffers: List<VkFramebuffer>
@@ -228,7 +228,6 @@ object VulkanRenderingEngine: IRenderEngine {
         createSurface()
         pickGraphicsCard()
         createLogicalDevice(renderDocUsed)
-        shadowMapExtent = VkExtent2D.create().set(2048,2048)
         createSwapchain()
         createCamera()
         createRenderImageViews()
@@ -380,8 +379,10 @@ object VulkanRenderingEngine: IRenderEngine {
         }
         var cursor = 0
         for(light in lights) {
-            shadowCastingLights[cursor] = light
-            cursor += light.type.shadowMapCount
+            for(i in 0 until light.type.shadowMapCount) {
+                shadowCastingLights[cursor] = light
+                cursor++
+            }
         }
         updateShadowMapIndices()
         nextFrame {
@@ -1687,7 +1688,9 @@ object VulkanRenderingEngine: IRenderEngine {
 
             fun pass(lightIndex: Int) {
                 useDescriptorSets(commandBuffer, index, shadowMappingPipelines[lightIndex], shadowMappingShaderDescriptorSets[lightIndex])
-                renderBatches.recordAll(commandBuffer, lightIndex, shadowMappingPipelines[lightIndex])
+                if(shadowCastingLights[lightIndex].shadowMapIndex != -1) { // detects placeholder lights
+                    renderBatches.recordAll(commandBuffer, lightIndex, shadowMappingPipelines[lightIndex])
+                }
             }
 
             pass(0)

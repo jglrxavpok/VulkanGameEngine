@@ -18,9 +18,10 @@ struct PointLight {
 
 struct DirectionalLight {
     vec3 viewDirection;
+    int shadowMapIndex;
     vec3 color;
     float intensity;
-    int shadowMapIndex;
+    float cascadeSplits[4]; // first split distance is implied to be 0
 };
 
 struct SpotLight {

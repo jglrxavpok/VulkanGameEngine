@@ -74,6 +74,10 @@ open class SpotLight: Light(), PositionableLight {
             get() = 1.0
             set(value) {}
 
+        override var intensity: Float
+            get() = 0f
+            set(value) {}
+
         override var shadowMapIndex: Int
             get() = -1
             set(value) {}

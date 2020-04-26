@@ -52,6 +52,10 @@ open class PointLight: Light(), PositionableLight {
         override var shadowMapIndex: Int
             get() = -1
             set(value) {}
+
+        override var intensity: Float
+            get() = 0f
+            set(value) {}
     }
 
     companion object {

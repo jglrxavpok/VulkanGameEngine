@@ -30,7 +30,6 @@ class ShadowMappingMatrices(val memories: List<VkDeviceMemory>, val buffers: Lis
             light.updateCameraForShadowMapping(tmpCamera, i-light.shadowMapIndex)
             tmpCamera.updateMatrices()
 
-            //tmpCamera.projection.mul(tmpCamera.view, worldToProjected) // compute world space to NDC
             tmpCamera.projection.m11(tmpCamera.projection.m11() * -1f)
             tmpCamera.projection.get(buffer)
             buffer.skip(sizeof<Matrix4f>())
