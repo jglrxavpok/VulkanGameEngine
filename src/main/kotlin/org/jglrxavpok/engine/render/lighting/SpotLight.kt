@@ -2,11 +2,9 @@ package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.Camera.Companion.AxisY
-import org.jglrxavpok.engine.render.VulkanRenderingEngine
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
-import org.joml.Quaternionf
 import org.joml.Vector3f
 import java.nio.ByteBuffer
 import kotlin.math.cos
@@ -35,7 +33,7 @@ open class SpotLight: Light(), PositionableLight {
 
         viewMatrix.transformDirection(direction, tmp)
         tmp.get(buffer)
-        buffer.skip(sizeof<Vector3f>()+ sizeof<Float>())
+        buffer.skip(sizeof<Vector3f>() + sizeof<Float>())
 
         color.get(buffer)
         buffer.skip(sizeof<Vector3f>())
@@ -48,7 +46,9 @@ open class SpotLight: Light(), PositionableLight {
         buffer.putInt(shadowMapIndex)
     }
 
-    override fun updateCameraForShadowMapping(camera: Camera) {
+    override fun updateCameraForShadowMapping(camera: Camera, shadowMapIndex: Int) {
+        assert(shadowMapIndex == 0) { "Spot lights can only produce a single shadow map" }
+
         // 256 = c + l * d + q*d*d
         // 0 = c-att + l *d + q * d²
         // delta = 4q(c-att)
@@ -82,12 +82,12 @@ open class SpotLight: Light(), PositionableLight {
     companion object {
         val SizeOf =
             sizeof<Vector3f>() + // position
-            sizeof<Float>() + // cos of angle (coscutoff)
-            sizeof<Vector3f>() + // direction
-            sizeof<Float>() + // padding
-            sizeof<Vector3f>() + // color
-            sizeof<Float>() + // intensity
-            3*sizeof<Float>() +// attenuation model
-            sizeof<Int>() // shadowMap index
+                    sizeof<Float>() + // cos of angle (coscutoff)
+                    sizeof<Vector3f>() + // direction
+                    sizeof<Float>() + // padding
+                    sizeof<Vector3f>() + // color
+                    sizeof<Float>() + // intensity
+            3* sizeof<Float>() +// attenuation model
+                    sizeof<Int>() // shadowMap index
     }
 }

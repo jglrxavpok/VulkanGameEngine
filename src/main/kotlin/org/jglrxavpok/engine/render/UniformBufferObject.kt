@@ -1,7 +1,7 @@
 package org.jglrxavpok.engine.render
 
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
 import java.nio.ByteBuffer
 

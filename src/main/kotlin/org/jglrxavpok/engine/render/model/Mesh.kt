@@ -1,6 +1,7 @@
 package org.jglrxavpok.engine.render.model
 
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.math.sizeof
 import org.jglrxavpok.engine.render.*
 import org.jglrxavpok.engine.render.VulkanRenderingEngine.useStack
 import org.lwjgl.system.MemoryStack

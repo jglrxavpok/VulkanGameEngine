@@ -2,8 +2,8 @@ package org.jglrxavpok.engine.render
 
 import org.jglrxavpok.engine.VkBuffer
 import org.jglrxavpok.engine.VkDeviceMemory
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
 import java.nio.ByteBuffer
 
@@ -14,20 +14,20 @@ class ShadowMappingMatrices(val memories: List<VkDeviceMemory>, val buffers: Lis
 
     companion object {
         fun SizeOf(lightCount: Int): Long =
-            (sizeof<Matrix4f>()*2*lightCount).toLong()
+            (sizeof<Matrix4f>() *2*lightCount).toLong()
     }
 
     private val tmpCamera = Camera(16f/9f)
 
     override fun sizeOf(): Long {
-        return SizeOf(VulkanRenderingEngine.MaxShadowCastingLights)
+        return SizeOf(VulkanRenderingEngine.MaxShadowMaps)
     }
 
     override fun write(buffer: ByteBuffer): ByteBuffer {
         val worldToProjected by lazy { Matrix4f() }
         val lights = VulkanRenderingEngine.shadowCastingLights
-        for(light in lights) {
-            light.updateCameraForShadowMapping(tmpCamera)
+        for((i, light) in lights.withIndex()) {
+            light.updateCameraForShadowMapping(tmpCamera, i-light.shadowMapIndex)
             tmpCamera.updateMatrices()
 
             //tmpCamera.projection.mul(tmpCamera.view, worldToProjected) // compute world space to NDC

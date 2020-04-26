@@ -1,8 +1,8 @@
 package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.render.Camera
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
 import org.joml.Vector3f
 import java.nio.ByteBuffer
@@ -23,7 +23,7 @@ open class PointLight: Light(), PositionableLight {
         // do it on the CPU once to avoid doing it for each pixel on the GPU
         viewMatrix.transformPosition(position, tmp)
         tmp.get(buffer)
-        buffer.skip(sizeof<Vector3f>()+ sizeof<Float>())
+        buffer.skip(sizeof<Vector3f>() + sizeof<Float>())
 
         color.get(buffer)
         buffer.skip(sizeof<Vector3f>())
@@ -37,7 +37,9 @@ open class PointLight: Light(), PositionableLight {
         buffer.putInt(shadowMapIndex)
     }
 
-    override fun updateCameraForShadowMapping(camera: Camera) {
+    override fun updateCameraForShadowMapping(camera: Camera, shadowMapIndex: Int) {
+        assert(shadowMapIndex >= 0 && shadowMapIndex < type.shadowMapCount) { "Point lights can only produce ${type.shadowMapCount} shadow maps" }
+
         TODO("Not yet implemented")
     }
 
@@ -58,7 +60,7 @@ open class PointLight: Light(), PositionableLight {
                     sizeof<Float>() + // padding
                     sizeof<Vector3f>() + // color
                     sizeof<Float>() + // intensity
-                    3*sizeof<Float>() +// attenuation model
+                    3* sizeof<Float>() +// attenuation model
                     sizeof<Int>() // shadow map index
     }
 }

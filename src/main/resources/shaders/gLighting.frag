@@ -27,7 +27,25 @@ vec3 computeSpecular(vec3 reflectedColor, float specularIntensity, vec3 fragToEy
     return vec3(0.0);
 }
 
-float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex) {
+int adjustOffset(int baseShadowMapIndex, vec4 shadowMapPos, int lightType) {
+    switch(lightType) {
+        case TYPE_DIRECTIONAL:
+            // TODO
+            return baseShadowMapIndex;
+
+        case TYPE_POINT:
+            // TODO
+            return baseShadowMapIndex;
+
+        case TYPE_SPOT:
+            return baseShadowMapIndex;
+
+        default:
+            return baseShadowMapIndex;
+    }
+}
+
+float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex, int lightType) {
     if(shadowMapIndex < 0 || shadowMapIndex >= MAX_SHADOW_MAPS) {
         return 1.0f;
     }
@@ -40,6 +58,7 @@ float calcShadow(vec3 fragPositionInViewSpace, int shadowMapIndex) {
     const float bias = 0.001f;
     float shadow = 1.0f;
     if(shadowMapPos.z > 0.0 && shadowMapPos.z < 1.0) {
+        int actualIndex = adjustOffset(shadowMapIndex, shadowMapPos, lightType);
         float depth = texture(shadowMaps[shadowMapIndex], shadowMapTexCoords).r;
         if(shadowMapPos.w > 0.0 && shadowMapTexCoords.x > 0.0 && shadowMapTexCoords.x < 1.0 && shadowMapTexCoords.y > 0.0 && shadowMapTexCoords.y < 1.0) {
             if((shadowMapPos.z-depth) > bias) {
@@ -62,7 +81,7 @@ void main() {
     for(int i = 0; i < lights.pointLightCount; i++) {
         PointLight light = lights.pointLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_POINT);
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);
@@ -80,7 +99,7 @@ void main() {
     for(int i = 0; i < lights.directionalLightCount; i++) {
         DirectionalLight light = lights.directionalLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_DIRECTIONAL);
 
         vec3 lightDir = normalize(light.viewDirection);
         vec3 reflectedColor = color * light.color * light.intensity;
@@ -96,7 +115,7 @@ void main() {
     for(int i = 0; i < lights.spotLightCount; i++) {
         SpotLight light = lights.spotLights[i];
 
-        float shadow = calcShadow(fragPosition, light.shadowMapIndex);
+        float shadow = calcShadow(fragPosition, light.shadowMapIndex, TYPE_SPOT);
 
         vec3 lightToPoint = fragPosition - light.viewPosition;
         vec3 lightDir = normalize(lightToPoint);

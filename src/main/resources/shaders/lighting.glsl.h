@@ -45,3 +45,8 @@ layout(binding = 3) uniform LightBuffer {
     int spotLightCount;
     int directionalLightCount;
 } lights;
+
+// Light types
+const int TYPE_POINT = 0;
+const int TYPE_DIRECTIONAL = 1;
+const int TYPE_SPOT = 2;

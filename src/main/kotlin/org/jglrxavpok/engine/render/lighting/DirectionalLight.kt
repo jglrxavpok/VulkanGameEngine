@@ -1,13 +1,13 @@
 package org.jglrxavpok.engine.render.lighting
 
+import org.jglrxavpok.engine.math.Frustum
 import org.jglrxavpok.engine.render.Camera
 import org.jglrxavpok.engine.render.Camera.Companion.AxisY
 import org.jglrxavpok.engine.render.VulkanRenderingEngine
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
-import org.joml.Matrix4f
-import org.joml.Quaternionf
-import org.joml.Vector3f
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
+import org.joml.*
+import java.lang.Math
 import java.nio.ByteBuffer
 
 open class DirectionalLight: Light() {
@@ -22,7 +22,7 @@ open class DirectionalLight: Light() {
         // do it on the CPU once to avoid doing it for each pixel on the GPU
         viewMatrix.transformDirection(direction, tmp)
         tmp.get(buffer)
-        buffer.skip(sizeof<Vector3f>()+ sizeof<Float>())
+        buffer.skip(sizeof<Vector3f>() + sizeof<Float>())
 
         color.get(buffer)
         buffer.skip(sizeof<Vector3f>())
@@ -36,14 +36,38 @@ open class DirectionalLight: Light() {
         buffer.putInt(-1)
     }
 
-    override fun updateCameraForShadowMapping(camera: Camera) {
-        // TODO: custom size
-        val frustumSize = 50f
-        camera.projection.setOrtho(-frustumSize, frustumSize, frustumSize, -frustumSize, 0f, frustumSize, true)
-        VulkanRenderingEngine.defaultCamera.position.fma(-5f, direction, camera.position)
+    override fun updateCameraForShadowMapping(camera: Camera, shadowMapIndex: Int) {
+        assert(shadowMapIndex >= 0 && shadowMapIndex < type.shadowMapCount) { "Directional lights can only produce ${type.shadowMapCount} shadow maps" }
+        // prepare for Cascaded Shadow Maps
+        val frustum: Frustum by lazy { Frustum(0f, 1f, 0f, 0f) }
+        // default values from Camera
+        frustum.fovx = (Math.PI/4f).toFloat()
+        frustum.aspectRatio = VulkanRenderingEngine.defaultCamera.aspectRatio
+
+        // TODO: change depending on index
+        frustum.near = 0.01f
+        frustum.far = 1000f
+
+        val invertedView by lazy { Matrix4f() }
+        VulkanRenderingEngine.defaultCamera.view.invert(invertedView)
+        val frustumCorners = frustum.get3DPoints().map { Vector4f(it, 1f) }
+        frustumCorners.forEach { invertedView.transform(it) } // transform to world space
+        val rotation by lazy { Quaternionf() }
+        rotation.identity().lookAlong(direction, AxisY)
+        frustumCorners.forEach { rotation.transform(it) } // transform in light space
+
+        val minX = frustumCorners.map { it.x() }.min()!!
+        val minY = frustumCorners.map { it.y() }.min()!!
+        val minZ = frustumCorners.map { it.z() }.min()!!
+        val maxX = frustumCorners.map { it.x() }.max()!!
+        val maxY = frustumCorners.map { it.y() }.max()!!
+        val maxZ = frustumCorners.map { it.z() }.max()!!
+
+        camera.projection.setOrtho(minX, maxX, minY, maxY, minZ, maxZ, true)
+        camera.position.set(0f)
 
         camera.useEulerAngles = false
-        camera.rotation.identity().lookAlong(direction, AxisY)
+        camera.rotation.set(rotation)
     }
 
     object None: DirectionalLight() {
@@ -64,7 +88,7 @@ open class DirectionalLight: Light() {
                     sizeof<Vector3f>() + // color
                     sizeof<Float>() +// intensity
                     sizeof<Int>() +// shadow map index
-                    3*sizeof<Int>()// padding
+                    3* sizeof<Int>()// padding
 
 
 

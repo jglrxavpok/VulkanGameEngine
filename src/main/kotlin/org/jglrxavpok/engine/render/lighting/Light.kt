@@ -15,5 +15,9 @@ abstract class Light {
 
     abstract fun write(buffer: ByteBuffer, viewMatrix: Matrix4f)
 
-    abstract fun updateCameraForShadowMapping(camera: Camera)
+    /**
+     *
+     * @param shadowMapIndex the index inside this light shadow maps (starts at 0 and ends at type.shadowMapCount-1)
+     */
+    abstract fun updateCameraForShadowMapping(camera: Camera, shadowMapIndex: Int)
 }

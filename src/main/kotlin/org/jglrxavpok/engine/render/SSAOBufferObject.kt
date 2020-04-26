@@ -1,17 +1,11 @@
 package org.jglrxavpok.engine.render
 
 import org.jglrxavpok.engine.*
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
-import org.joml.Vector2f
 import org.joml.Vector3f
 import org.joml.Vector4f
-import org.lwjgl.system.MemoryStack
-import org.lwjgl.system.MemoryUtil
-import org.lwjgl.vulkan.VK10
-import org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE
-import org.lwjgl.vulkan.VK10.vkFlushMappedMemoryRanges
-import org.lwjgl.vulkan.VkDevice
-import org.lwjgl.vulkan.VkMappedMemoryRange
 import java.nio.ByteBuffer
 
 /**

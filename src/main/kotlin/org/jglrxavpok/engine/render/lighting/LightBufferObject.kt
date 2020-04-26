@@ -1,7 +1,8 @@
 package org.jglrxavpok.engine.render.lighting
 
 import org.jglrxavpok.engine.*
-import org.jglrxavpok.engine.render.Camera
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.jglrxavpok.engine.render.Descriptor
 import org.jglrxavpok.engine.render.ShaderResource
 import org.jglrxavpok.engine.render.VulkanRenderingEngine

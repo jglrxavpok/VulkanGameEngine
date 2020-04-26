@@ -1,6 +1,6 @@
 package org.jglrxavpok.engine.render
 
-import org.jglrxavpok.engine.sizeof
+import org.jglrxavpok.engine.math.sizeof
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VkVertexInputAttributeDescription

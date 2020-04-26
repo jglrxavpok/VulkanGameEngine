@@ -2,8 +2,8 @@ package org.jglrxavpok.engine.render
 
 import org.jglrxavpok.engine.VkDeviceMemory
 import org.jglrxavpok.engine.render.VulkanDebug.name
-import org.jglrxavpok.engine.sizeof
-import org.jglrxavpok.engine.skip
+import org.jglrxavpok.engine.math.sizeof
+import org.jglrxavpok.engine.math.skip
 import org.joml.Matrix4f
 import org.lwjgl.vulkan.EXTDebugReport
 import java.nio.ByteBuffer

@@ -1,4 +1,4 @@
-package org.jglrxavpok.engine
+package org.jglrxavpok.engine.math
 
 import org.joml.*
 import java.nio.Buffer
